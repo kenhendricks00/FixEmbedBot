@@ -273,6 +273,40 @@ function htmlAttribute(tag: string, name: string): string {
     );
 }
 
+function redditGalleryImagesFromHtml(html: string): string[] {
+    const candidates: Array<{ index: number; position?: number; url: string }> = [];
+    const seen = new Set<string>();
+
+    for (const [index, match] of Array.from(html.matchAll(/<a\b[^>]*>/gi)).entries()) {
+        const tag = match[0];
+        const classes = htmlAttribute(tag, 'class').split(/\s+/);
+        if (!classes.includes('gallery-item-thumbnail-link')) continue;
+
+        const media = publicHttpsUrl(htmlAttribute(tag, 'href'));
+        if (!media || !/(^|\.)preview\.redd\.it$/i.test(media.hostname)) continue;
+        if (!/\.(?:jpe?g|png|gif|webp)$/i.test(media.pathname)) continue;
+        if (seen.has(media.toString())) continue;
+
+        seen.add(media.toString());
+        const rawPosition = htmlAttribute(tag, 'data-position');
+        const parsedPosition = rawPosition ? Number(rawPosition) : Number.NaN;
+        candidates.push({
+            index,
+            position: Number.isFinite(parsedPosition) && parsedPosition >= 0
+                ? parsedPosition
+                : undefined,
+            url: media.toString(),
+        });
+    }
+
+    if (candidates.every(({ position }) => position !== undefined)) {
+        candidates.sort(
+            (left, right) => left.position! - right.position! || left.index - right.index,
+        );
+    }
+    return candidates.map(({ url }) => url);
+}
+
 async function recoverFromRedditCrawlerPage(
     subreddit: string,
     postId: string,
@@ -293,7 +327,19 @@ async function recoverFromRedditCrawlerPage(
     )?.[0];
     if (!postTag) return null;
     const postStart = html.indexOf(postTag);
-    const postHtml = html.slice(postStart, postStart + 20_000);
+    const postTail = html.slice(postStart);
+    let postBoundary = -1;
+    for (const match of postTail.matchAll(/<div\b[^>]*>/gi)) {
+        const classes = htmlAttribute(match[0], 'class').split(/\s+/);
+        if (classes.includes('child') || classes.includes('commentarea')) {
+            postBoundary = match.index;
+            break;
+        }
+    }
+    const hasPostBoundary = postBoundary >= 0;
+    const postHtml = hasPostBoundary
+        ? postTail.slice(0, postBoundary)
+        : postTail.slice(0, 20_000);
     const rawTitle = postHtml.match(
         /<a\b[^>]*\bclass=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/a>/i,
     )?.[1];
@@ -312,10 +358,13 @@ async function recoverFromRedditCrawlerPage(
         REDDIT_FALLBACK_ICON,
         redditCookieHeader(response),
     );
+    const images = hasPostBoundary ? redditGalleryImagesFromHtml(postHtml) : [];
     const fallbackImage = articleMetaContent(html, 'og:image');
     const image = directImageUrl
-        || await fetchArticleImage(articleUrl)
-        || (fallbackImage ? publicHttpsUrl(fallbackImage, pageUrl)?.toString() : undefined);
+        || (images.length ? undefined : await fetchArticleImage(articleUrl))
+        || (images.length || !fallbackImage
+            ? undefined
+            : publicHttpsUrl(fallbackImage, pageUrl)?.toString());
     const canonicalUrl = permalink
         ? new URL(permalink, 'https://www.reddit.com').toString()
         : `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/comments/${encodeURIComponent(postId)}/`;
@@ -332,6 +381,7 @@ async function recoverFromRedditCrawlerPage(
             authorUrl: author ? `https://www.reddit.com/user/${encodeURIComponent(author)}/` : undefined,
             authorAvatar,
             image,
+            images: images.length ? images : undefined,
             color: platformColors.reddit,
             platform: 'reddit',
             stats: formatStats({ comments, likes: score }),

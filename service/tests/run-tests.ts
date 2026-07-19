@@ -2045,6 +2045,83 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'redditHandler recovers gallery media instead of a stale crawler preview',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const shareUrl = 'https://www.reddit.com/r/DinoCrisis/s/3jwGAjAZpO';
+            const postPath = '/r/DinoCrisis/comments/1uxuf14/check_out_this_hidden_gem_ive_been_wishlisting/';
+            const canonicalUrl = `https://www.reddit.com${postPath}`;
+            const galleryImages = [
+                'https://preview.redd.it/g7v6v7j29jdh1.png?width=960&format=png&auto=webp&s=first',
+                'https://preview.redd.it/7lyytbj29jdh1.png?width=960&format=png&auto=webp&s=second',
+            ];
+
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                if (url === shareUrl) {
+                    return new Response('', {
+                        status: 302,
+                        headers: { Location: canonicalUrl },
+                    });
+                }
+                if (url.includes('/comments/') && url.includes('.json')) {
+                    return new Response('blocked', { status: 403, statusText: 'Forbidden' });
+                }
+                if (url.startsWith('https://old.reddit.com/')) {
+                    return new Response(`
+                        <meta property="og:image" content="https://external-preview.redd.it/stale.png?width=1200&amp;s=expired">
+                        <a class="gallery-item-thumbnail-link" data-position="0"
+                            href="https://preview.redd.it/unrelated-promoted-post.png">unrelated</a>
+                        <div class="thing link" id="thing_t3_1uxuf14"
+                            data-author="Independent_Egg_1854"
+                            data-subreddit="DinoCrisis"
+                            data-timestamp="1784182121000"
+                            data-url="https://www.reddit.com/gallery/1uxuf14"
+                            data-permalink="${postPath}"
+                            data-comments-count="34"
+                            data-score="492"
+                            data-nsfw="false">
+                            <a class="title may-blank outbound" href="https://www.reddit.com/gallery/1uxuf14">Hidden gem</a>
+                        </div>
+                        <div class="gallery-preview">
+                            <a class="may-blank gallery-item-thumbnail-link" data-position="1"
+                                href="${galleryImages[0].replace(/&/g, '&amp;')}">first</a>
+                        </div>
+                        <div class="gallery-padding">${'x'.repeat(20_100)}</div>
+                        <div class="gallery-preview">
+                            <a class="may-blank gallery-item-thumbnail-link"
+                                href="${galleryImages[1].replace(/&/g, '&amp;')}">second</a>
+                        </div>
+                        <div class="child"></div>
+                        <a class="gallery-item-thumbnail-link" data-position="3"
+                            href="https://preview.redd.it/unrelated-related-post.png">unrelated</a>
+                    `, { status: 200, headers: { 'Content-Type': 'text/html' } });
+                }
+                if (url === 'https://api.reddit.com/r/DinoCrisis/about?raw_json=1') {
+                    return new Response(JSON.stringify({
+                        data: {
+                            community_icon: 'https://styles.redditmedia.com/dino-crisis.png',
+                        },
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                if (url.includes('/about.json')) {
+                    return new Response('blocked', { status: 403, statusText: 'Forbidden' });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await redditHandler.handle(shareUrl, env);
+
+                assert.equal(response.success, true);
+                assert.deepEqual(response.data?.images, galleryImages);
+                assert.equal(response.data?.image, undefined);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'redditHandler recovers current link-post metadata and the article preview image',
         run: async () => {
             const originalFetch = globalThis.fetch;
