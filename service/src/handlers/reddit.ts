@@ -373,7 +373,7 @@ async function recoverFromRedditCrawlerPage(
         success: true,
         source: 'first-party',
         data: {
-            title: `r/${subreddit} \u2022 ${truncateText(decodeRedditHtml(rawTitle.replace(/<[^>]+>/g, '')), 100)}`,
+            title: `r/${subreddit} \u2022 ${decodeRedditHtml(rawTitle.replace(/<[^>]+>/g, ''))}`,
             description: '',
             url: canonicalUrl,
             siteName: getBrandedSiteName('reddit'),
@@ -446,7 +446,7 @@ async function recoverFromRedditEmbed(
                     success: true,
                     source: 'first-party',
                     data: {
-                        title: `r/${displaySubreddit} • ${truncateText(cleanTitle, 100)}`,
+                        title: `r/${displaySubreddit} • ${cleanTitle}`,
                         description: '',
                         url: canonicalUrl,
                         siteName: getBrandedSiteName('reddit'),
@@ -486,7 +486,7 @@ async function recoverFromRedditEmbed(
                 success: true,
                 source: 'first-party',
                 data: {
-                    title: `r/${displaySubreddit} • ${truncateText(title, 100)}`,
+                    title: `r/${displaySubreddit} • ${title}`,
                     description: '',
                     url: canonicalUrl,
                     siteName: getBrandedSiteName('reddit'),
@@ -639,7 +639,7 @@ export const redditHandler: PlatformHandler = {
                 success: true,
                 source: 'first-party',
                 data: {
-                    title: `r/${post.subreddit} • ${truncateText(post.title, 100)}`,
+                    title: `r/${post.subreddit} • ${post.title}`,
                     description,
                     url: `https://reddit.com${post.permalink}`,
                     siteName: getBrandedSiteName('reddit'),
