@@ -2052,6 +2052,7 @@ const tests: TestCase[] = [
             const postPath = '/r/DinoCrisis/comments/1uxuf14/check_out_this_hidden_gem_ive_been_wishlisting/';
             const canonicalUrl = `https://www.reddit.com${postPath}`;
             const fullTitle = 'Check out this hidden gem Ive been wishlisting for years im so hyped for it , dino crisis vibes are all over the place here!';
+            const fullDescription = 'Check out the trailer for this one it looks so jolly good ! [https://www.youtube.com/watch?v=ZbhdQdJX4u8](https://www.youtube.com/watch?v=ZbhdQdJX4u8)';
             const galleryImages = [
                 'https://preview.redd.it/g7v6v7j29jdh1.png?width=960&format=png&auto=webp&s=first',
                 'https://preview.redd.it/7lyytbj29jdh1.png?width=960&format=png&auto=webp&s=second',
@@ -2070,6 +2071,7 @@ const tests: TestCase[] = [
                 }
                 if (url.startsWith('https://old.reddit.com/')) {
                     return new Response(`
+                        <meta name="description" content="${fullDescription}">
                         <meta property="og:image" content="https://external-preview.redd.it/stale.png?width=1200&amp;s=expired">
                         <a class="gallery-item-thumbnail-link" data-position="0"
                             href="https://preview.redd.it/unrelated-promoted-post.png">unrelated</a>
@@ -2116,6 +2118,7 @@ const tests: TestCase[] = [
 
                 assert.equal(response.success, true);
                 assert.equal(response.data?.title, `r/DinoCrisis \u2022 ${fullTitle}`);
+                assert.equal(response.data?.description, fullDescription);
                 assert.deepEqual(response.data?.images, galleryImages);
                 assert.equal(response.data?.image, undefined);
             } finally {
@@ -4864,7 +4867,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v7']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v8']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

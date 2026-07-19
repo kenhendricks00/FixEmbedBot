@@ -359,6 +359,10 @@ async function recoverFromRedditCrawlerPage(
         redditCookieHeader(response),
     );
     const images = hasPostBoundary ? redditGalleryImagesFromHtml(postHtml) : [];
+    const description = truncateText(
+        decodeRedditHtml(articleMetaContent(html, 'description') || ''),
+        1200,
+    );
     const fallbackImage = articleMetaContent(html, 'og:image');
     const image = directImageUrl
         || (images.length ? undefined : await fetchArticleImage(articleUrl))
@@ -374,7 +378,7 @@ async function recoverFromRedditCrawlerPage(
         source: 'first-party',
         data: {
             title: `r/${subreddit} \u2022 ${decodeRedditHtml(rawTitle.replace(/<[^>]+>/g, ''))}`,
-            description: '',
+            description,
             url: canonicalUrl,
             siteName: getBrandedSiteName('reddit'),
             authorName: author ? `u/${author}` : undefined,
