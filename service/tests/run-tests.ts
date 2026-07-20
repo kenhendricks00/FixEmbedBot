@@ -1804,6 +1804,94 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'instagramHandler enriches a skeletal reel from canonical Instagram metadata',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const requested: string[] = [];
+            const caption = [
+                'You wouldn\u2019t download a car. Stop pirating 2026.',
+                '',
+                '#ai #bigtech #engineer #csmajor #linux',
+            ].join('\n');
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                requested.push(url);
+                if (url.includes('instagram.com/p/Da6v0VOOeJL/embed/captioned')) {
+                    return new Response('<html></html>', { status: 200 });
+                }
+                if (url === 'https://www.instagram.com/reel/Da6v0VOOeJL/') {
+                    return new Response([
+                        '<meta name="twitter:title" content="Aks (&#064;andysharma.418) &#x2022; Instagram reel" />',
+                        '<meta property="og:image" content="https://scontent.example.cdninstagram.com/poster.jpg?x=1&amp;y=2" />',
+                        '<meta property="og:url" content="https://www.instagram.com/andysharma.418/reel/Da6v0VOOeJL/" />',
+                        '<script>',
+                        JSON.stringify({
+                            timeline: [{
+                                code: 'Da6v0VOOeJL',
+                                like_count: 1,
+                                comment_count: 2,
+                                caption: { text: 'Caption from another reel' },
+                                taken_at: 1700000000,
+                            }],
+                            code: 'Da6v0VOOeJL',
+                            user: {
+                                username: 'andysharma.418',
+                                profile_pic_url: 'https://scontent.example.cdninstagram.com/avatar.jpg?x=1&y=2',
+                            },
+                            like_count: 91462,
+                            comment_count: 796,
+                            caption: { text: caption },
+                            taken_at: 1784323484,
+                        }),
+                        '</script>',
+                    ].join(''), { status: 200 });
+                }
+                if (url.includes('vxinstagram.com/reel/Da6v0VOOeJL')) {
+                    return new Response(
+                        '<meta property="og:video" content="https://vxinstagram.com/offload/Da6v0VOOeJL/0.mp4">',
+                        { status: 200 },
+                    );
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await instagramHandler.handle(
+                    'https://www.instagram.com/reel/Da6v0VOOeJL/',
+                    env,
+                );
+
+                assert.equal(response.success, true);
+                assert.equal(response.source, 'fallback');
+                assert.equal(response.data?.authorName, 'Aks');
+                assert.equal(response.data?.authorHandle, '@andysharma.418');
+                assert.equal(
+                    response.data?.authorUrl,
+                    'https://www.instagram.com/andysharma.418/',
+                );
+                assert.equal(
+                    response.data?.authorAvatar,
+                    'https://scontent.example.cdninstagram.com/avatar.jpg?x=1&y=2',
+                );
+                assert.equal(response.data?.caption, caption);
+                assert.match(response.data?.stats || '', /91\.5K/);
+                assert.match(response.data?.stats || '', /796/);
+                assert.equal(
+                    response.data?.video?.thumbnail,
+                    'https://scontent.example.cdninstagram.com/poster.jpg?x=1&y=2',
+                );
+                assert.equal(response.data?.timestamp, '2026-07-17T21:24:44.000Z');
+                assert.deepEqual(requested, [
+                    'https://www.instagram.com/p/Da6v0VOOeJL/embed/captioned/',
+                    'https://www.instagram.com/reel/Da6v0VOOeJL/',
+                    'https://vxinstagram.com/reel/Da6v0VOOeJL/',
+                ]);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'instagramHandler keeps the native reel poster with its video',
         run: async () => {
             const originalFetch = globalThis.fetch;

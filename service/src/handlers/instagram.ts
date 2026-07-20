@@ -10,7 +10,7 @@
  * - Snapsave decryption based on: https://github.com/ahmedrangel/snapsave-media-downloader
  */
 
-import type { Env, HandlerResponse, PlatformHandler } from '../types.ts';
+import type { EmbedData, Env, HandlerResponse, PlatformHandler } from '../types.ts';
 import {
     deriveMetaShortcodeTimestamp,
     normalizePostTimestamp,
@@ -20,6 +20,7 @@ import { formatStats, platformColors, getBrandedSiteName } from '../utils/embed.
 
 const INSTAGRAM_TOTAL_TIMEOUT_MS = 3500;
 const INSTAGRAM_NATIVE_TIMEOUT_MS = 2200;
+const INSTAGRAM_CANONICAL_TIMEOUT_MS = 1200;
 const INSTAGRAM_VX_TIMEOUT_MS = 1200;
 const INSTAGRAM_KK_TIMEOUT_MS = 600;
 const INSTAGRAM_STATS_TIMEOUT_MS = 650;
@@ -383,19 +384,53 @@ export const instagramHandler: PlatformHandler = {
             if (nativeResult.data && !nativeResult.data.timestamp) {
                 nativeResult.data.timestamp = shortcodeTimestamp;
             }
-            const nativeHasRequiredMedia = parsed.type === 'reel'
+            let nativeHasRequiredMedia = parsed.type === 'reel'
                 ? Boolean(nativeResult.data?.video)
                 : Boolean(nativeResult.data?.image || nativeResult.data?.video);
-            if (nativeResult.success && nativeHasRequiredMedia) {
+            const nativeHasPublicContext = Boolean(
+                nativeResult.data?.authorHandle || nativeResult.data?.caption,
+            );
+            if (
+                nativeResult.success
+                && nativeHasRequiredMedia
+                && nativeHasPublicContext
+            ) {
                 return nativeResult;
             }
 
-            // Try VxInstagram first for better image/carousel support
-            const vxResult = await scrapeVxInstagram(
-                parsed.shortcode,
-                parsed.type,
-                remainingProviderTime(INSTAGRAM_VX_TIMEOUT_MS),
-            );
+            // Instagram's embed document can be skeletal while the canonical
+            // crawler response still contains the public creator, caption,
+            // engagement, avatar, and poster. Recover that metadata in parallel
+            // with Vx media so the fallback remains inside one shared deadline.
+            const [canonicalResult, vxResult] = await Promise.all([
+                scrapeCanonicalHtml(
+                    canonicalUrl,
+                    parsed,
+                    remainingProviderTime(INSTAGRAM_CANONICAL_TIMEOUT_MS),
+                ),
+                scrapeVxInstagram(
+                    parsed.shortcode,
+                    parsed.type,
+                    remainingProviderTime(INSTAGRAM_VX_TIMEOUT_MS),
+                ),
+            ]);
+            if (canonicalResult.success && canonicalResult.data) {
+                const enrichedData = mergeCanonicalInstagramData(
+                    nativeResult.data,
+                    canonicalResult.data,
+                );
+                nativeResult = {
+                    ...nativeResult,
+                    success: true,
+                    data: enrichedData,
+                };
+                nativeHasRequiredMedia = parsed.type === 'reel'
+                    ? Boolean(enrichedData.video)
+                    : Boolean(enrichedData.image || enrichedData.video);
+                if (nativeHasRequiredMedia) {
+                    return nativeResult;
+                }
+            }
 
             if (vxResult.success && vxResult.isVideo && vxResult.video) {
                 const embedDomain = env.EMBED_DOMAIN || 'fixembed.app';
@@ -728,7 +763,7 @@ function decodeInstagramText(value: string): string {
         .replace(/&gt;/g, '>');
 }
 
-function trustedInstagramAvatarUrl(value: string): string | undefined {
+function trustedInstagramMediaUrl(value: string): string | undefined {
     try {
         const decoded = decodeInstagramMediaUrl(value);
         const url = new URL(decoded);
@@ -749,6 +784,157 @@ function trustedInstagramAvatarUrl(value: string): string | undefined {
     } catch {
         return undefined;
     }
+}
+
+function extractInstagramMeta(
+    html: string,
+    attribute: 'name' | 'property',
+    key: string,
+): string | undefined {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const patterns = [
+        new RegExp(
+            `<meta\\b[^>]*\\b${attribute}=["']${escapedKey}["'][^>]*\\bcontent=["']([^"']*)["']`,
+            'i',
+        ),
+        new RegExp(
+            `<meta\\b[^>]*\\bcontent=["']([^"']*)["'][^>]*\\b${attribute}=["']${escapedKey}["']`,
+            'i',
+        ),
+    ];
+    for (const pattern of patterns) {
+        const value = html.match(pattern)?.[1];
+        if (value) return decodeInstagramText(value).trim();
+    }
+    return undefined;
+}
+
+function decodeInstagramJsonString(value: string | undefined): string | undefined {
+    if (!value) return undefined;
+    try {
+        return decodeInstagramText(JSON.parse(`"${value}"`)).trim() || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function extractInstagramCanonicalAvatar(
+    html: string,
+    expectedUsername: string,
+): string | undefined {
+    if (!expectedUsername) return undefined;
+    const escapedUsername = expectedUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const patterns = [
+        new RegExp(
+            `"user"\\s*:\\s*\\{[^{}]{0,4096}?"username"\\s*:\\s*"${escapedUsername}"[^{}]{0,4096}?"profile_pic_url"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`,
+            'i',
+        ),
+        new RegExp(
+            `"user"\\s*:\\s*\\{[^{}]{0,4096}?"profile_pic_url"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"[^{}]{0,4096}?"username"\\s*:\\s*"${escapedUsername}"`,
+            'i',
+        ),
+    ];
+    for (const pattern of patterns) {
+        const avatar = html.match(pattern)?.[1];
+        if (avatar) return trustedInstagramMediaUrl(avatar);
+    }
+    return undefined;
+}
+
+function parseCanonicalInstagramMetadata(
+    html: string,
+    canonicalUrl: string,
+    parsed: { type: string; shortcode: string },
+): EmbedData | undefined {
+    const mediaMarker = `"code":"${parsed.shortcode}"`;
+    const mediaIndex = html.lastIndexOf(mediaMarker);
+    const mediaHtml = mediaIndex >= 0
+        ? html.slice(mediaIndex, mediaIndex + 256 * 1024)
+        : html;
+    const twitterTitle = extractInstagramMeta(html, 'name', 'twitter:title');
+    const titleIdentity = twitterTitle?.match(
+        /^(.+?)\s+\(@([a-z0-9._]+)\)\s+\u2022\s+Instagram\b/i,
+    );
+    const publicUrl = extractInstagramMeta(html, 'property', 'og:url');
+    let username = titleIdentity?.[2] || '';
+    if (!username && publicUrl) {
+        try {
+            const segments = new URL(publicUrl).pathname.split('/').filter(Boolean);
+            if (segments[1] === 'p' || segments[1] === 'reel' || segments[1] === 'reels') {
+                [username] = segments;
+            }
+        } catch {
+            // Invalid canonical metadata is ignored.
+        }
+    }
+
+    const caption = decodeInstagramJsonString(
+        mediaHtml.match(
+            /"caption"\s*:\s*\{[^{}]{0,4096}?"text"\s*:\s*"((?:\\.|[^"\\])*)"/i,
+        )?.[1],
+    );
+    const likes = Number(mediaHtml.match(/"like_count"\s*:\s*(\d+)/)?.[1]);
+    const comments = Number(mediaHtml.match(/"comment_count"\s*:\s*(\d+)/)?.[1]);
+    const poster = trustedInstagramMediaUrl(
+        extractInstagramMeta(html, 'property', 'og:image') || '',
+    );
+    const authorName = titleIdentity?.[1]?.trim() || username;
+    const authorAvatar = extractInstagramCanonicalAvatar(html, username);
+    const timestamp = extractInstagramTimestamp(mediaHtml);
+    const hasPublicMetadata = Boolean(
+        username
+        || caption
+        || poster
+        || Number.isFinite(likes)
+        || Number.isFinite(comments),
+    );
+    if (!hasPublicMetadata) return undefined;
+
+    return {
+        title: caption
+            ? truncateText(caption, 100)
+            : parsed.type === 'reel'
+                ? 'Reel'
+                : 'Post',
+        description: '',
+        caption,
+        url: canonicalUrl,
+        siteName: getBrandedSiteName('instagram'),
+        authorName: authorName || undefined,
+        authorHandle: username ? `@${username}` : undefined,
+        authorUrl: username ? `https://www.instagram.com/${username}/` : undefined,
+        authorAvatar,
+        image: poster,
+        color: platformColors.instagram,
+        platform: 'instagram',
+        stats: formatStats({
+            likes: Number.isFinite(likes) ? likes : undefined,
+            comments: Number.isFinite(comments) ? comments : undefined,
+        }),
+        timestamp,
+    };
+}
+
+function mergeCanonicalInstagramData(
+    current: EmbedData | undefined,
+    canonical: EmbedData,
+): EmbedData {
+    if (!current) return canonical;
+    const currentHasCaption = Boolean(current.caption);
+    return {
+        ...current,
+        title: currentHasCaption ? current.title : canonical.title,
+        description: current.description || canonical.description,
+        caption: current.caption || canonical.caption,
+        authorName: current.authorName || canonical.authorName,
+        authorHandle: current.authorHandle || canonical.authorHandle,
+        authorUrl: current.authorUrl || canonical.authorUrl,
+        authorAvatar: current.authorAvatar || canonical.authorAvatar,
+        image: current.image || canonical.image,
+        video: current.video || canonical.video,
+        stats: canonical.stats || current.stats,
+        timestamp: canonical.timestamp || current.timestamp,
+    };
 }
 
 function extractInstagramOwnerAvatar(
@@ -774,7 +960,7 @@ function extractInstagramOwnerAvatar(
             ) {
                 continue;
             }
-            const trustedAvatar = trustedInstagramAvatarUrl(avatar);
+            const trustedAvatar = trustedInstagramMediaUrl(avatar);
             if (trustedAvatar) return trustedAvatar;
         }
     }
@@ -867,6 +1053,47 @@ function extractInstagramTimestamp(html: string): string | undefined {
         || html.match(/<meta\b[^>]*(?:itemprop|property)=["'](?:datePublished|uploadDate|article:published_time)["'][^>]*\bcontent=["']([^"']+)["']/i)?.[1]
         || html.match(/<meta\b[^>]*\bcontent=["']([^"']+)["'][^>]*(?:itemprop|property)=["'](?:datePublished|uploadDate|article:published_time)["']/i)?.[1];
     return normalizePostTimestamp(dateValue);
+}
+
+async function scrapeCanonicalHtml(
+    canonicalUrl: string,
+    parsed: { type: string; shortcode: string },
+    timeoutMs: number,
+): Promise<HandlerResponse> {
+    try {
+        const response = await fetchWithTimeout(canonicalUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; FixEmbed/1.0; +https://fixembed.app)',
+                'Accept': 'text/html,application/xhtml+xml',
+            },
+        }, timeoutMs);
+        if (!response.ok) {
+            return {
+                success: false,
+                error: `Instagram returned ${response.status}`,
+                redirect: canonicalUrl,
+            };
+        }
+
+        const data = parseCanonicalInstagramMetadata(
+            await response.text(),
+            canonicalUrl,
+            parsed,
+        );
+        return data
+            ? { success: true, source: 'first-party', data }
+            : {
+                success: false,
+                error: 'Instagram canonical metadata was incomplete',
+                redirect: canonicalUrl,
+            };
+    } catch {
+        return {
+            success: false,
+            error: 'Failed to scrape canonical Instagram metadata',
+            redirect: canonicalUrl,
+        };
+    }
 }
 
 async function scrapeEmbedHtml(
