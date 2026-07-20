@@ -74,7 +74,7 @@ def build_youtube_community_layout(
                     discord.MediaGalleryItem(
                         url,
                         description=(description or "YouTube community post")[:1024],
-                        spoiler=payload.get("sensitive") is True,
+                        spoiler=preferences.content_visibility.should_spoiler(payload),
                     )
                     for url in media_urls[:10]
                 )

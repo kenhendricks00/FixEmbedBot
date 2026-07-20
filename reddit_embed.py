@@ -114,7 +114,7 @@ def build_reddit_layout(
                     discord.MediaGalleryItem(
                         url,
                         description=post_title[:1024] or None,
-                        spoiler=payload.get("sensitive") is True,
+                        spoiler=preferences.content_visibility.should_spoiler(payload),
                     )
                     for url in media_urls[:10]
                 )

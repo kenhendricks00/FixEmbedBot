@@ -93,7 +93,6 @@ def build_platform_layout(
     fallback_image = str(payload.get("image") or "").strip()
     if not media_urls and fallback_image:
         media_urls.append(fallback_image)
-    sensitive = payload.get("sensitive") is True
     if media_urls:
         children.append(
             discord.ui.MediaGallery(
@@ -101,7 +100,7 @@ def build_platform_layout(
                     discord.MediaGalleryItem(
                         url,
                         description=(description or title)[:1024],
-                        spoiler=sensitive,
+                        spoiler=preferences.content_visibility.should_spoiler(payload),
                     )
                     for url in dict.fromkeys(media_urls[:10])
                 )

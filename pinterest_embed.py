@@ -77,7 +77,7 @@ def build_pinterest_layout(
                     discord.MediaGalleryItem(
                         url,
                         description=(description or title)[:1024],
-                        spoiler=payload.get("sensitive") is True,
+                        spoiler=preferences.content_visibility.should_spoiler(payload),
                     )
                     for url in media_urls[:10]
                 )

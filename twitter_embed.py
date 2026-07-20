@@ -76,7 +76,10 @@ def _media_urls(data: Mapping[str, Any]) -> list[tuple[str, Optional[str]]]:
     return media[:10]
 
 
-def _quote_section_items(section: Mapping[str, Any]) -> list[discord.ui.Item[Any]]:
+def _quote_section_items(
+    section: Mapping[str, Any],
+    preferences: CardPreferences,
+) -> list[discord.ui.Item[Any]]:
     fallback_name = re.sub(
         r"^quoted(?:\s+post)?\s*",
         "",
@@ -133,7 +136,7 @@ def _quote_section_items(section: Mapping[str, Any]) -> list[discord.ui.Item[Any
                             if media_type == "gif"
                             else f"Media from {name}"
                         ),
-                        spoiler=section.get("sensitive") is True,
+                        spoiler=preferences.content_visibility.should_spoiler(section),
                     )
                     for url, media_type in media
                 )
@@ -194,7 +197,7 @@ def build_twitter_layout(
                     discord.MediaGalleryItem(
                         url,
                         description=media_description,
-                        spoiler=payload.get("sensitive") is True,
+                        spoiler=preferences.content_visibility.should_spoiler(payload),
                     )
                     for url, _media_type in media
                 )
@@ -207,7 +210,7 @@ def build_twitter_layout(
         if not isinstance(section, Mapping):
             continue
         if section.get("kind") == "quote":
-            rendered_sections.extend(_quote_section_items(section))
+            rendered_sections.extend(_quote_section_items(section, preferences))
         else:
             section_text = _section_text(section)
             if section_text:

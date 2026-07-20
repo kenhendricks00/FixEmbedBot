@@ -280,7 +280,7 @@ def build_instagram_layout(
                             description=(
                                 f"Instagram {media_kind} {index + 1} of {total_media}"
                             ),
-                            spoiler=payload.get("sensitive") is True,
+                            spoiler=preferences.content_visibility.should_spoiler(payload),
                         )
                         for index, url in enumerate(
                             media_urls[start:start + 10],

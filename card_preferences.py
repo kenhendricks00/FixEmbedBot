@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Mapping
 
+from content_visibility import ContentVisibility
+
 
 _HASHTAG_RE = re.compile(r"(?<!\w)#[\w]+", re.UNICODE)
 _COMPACT_CAPTION_LIMIT = 280
@@ -19,6 +21,7 @@ class CardPreferences:
     show_stats: bool = True
     show_hashtags: bool = True
     caption_mode: str = "full"
+    content_visibility: ContentVisibility = ContentVisibility()
 
     def accent_or(self, platform_color: int) -> int:
         return self.accent_color if self.accent_color is not None else platform_color
