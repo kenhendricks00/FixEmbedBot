@@ -672,7 +672,7 @@ const tests: TestCase[] = [
                         url: 'https://tiktok.com/@creator/video/7421234567890123456',
                         created_at: '2024-07-16T12:30:00.000Z',
                         content: '<b>❤️ 25.5M  💬 251.4K  🔁 3.3M</b>',
-                        spoiler_text: '',
+                        spoiler_text: 'Plot twist',
                         account: {
                             username: 'creator',
                             display_name: 'Creator Name',
@@ -702,6 +702,8 @@ const tests: TestCase[] = [
                     'https://offload.tnktok.com/generate/video/7421234567890123456',
                 );
                 assert.equal(response.data?.stats, '❤️ 25.5M 💬 251.4K 🔁 3.3M');
+                assert.equal(response.data?.sensitive, true);
+                assert.deepEqual(response.data?.sensitivityTypes, ['spoiler']);
             } finally {
                 globalThis.fetch = originalFetch;
             }
@@ -3536,6 +3538,7 @@ const tests: TestCase[] = [
                     permalink: '/r/pics/comments/abc123/a_twoimage_gallery/',
                     thumbnail: 'https://preview.redd.it/thumb.jpg',
                     over_18: true,
+                    spoiler: true,
                     is_video: false,
                     created_utc: 1783900800,
                     score: 50,
@@ -3564,6 +3567,7 @@ const tests: TestCase[] = [
                 assert.equal(response.data?.authorAvatar, 'https://styles.redditmedia.com/subreddit-icon.png?width=256&height=256');
                 assert.equal(response.data?.timestamp, '2026-07-13T00:00:00.000Z');
                 assert.equal(response.data?.sensitive, true);
+                assert.deepEqual(response.data?.sensitivityTypes, ['nsfw', 'spoiler']);
                 assert.deepEqual(response.data?.images, [
                     'https://preview.redd.it/second.png?x=1&y=2',
                     'https://preview.redd.it/first.png?x=1&y=2',

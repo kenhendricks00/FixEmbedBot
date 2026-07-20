@@ -314,6 +314,8 @@ function firstPartyData(
         }
         : undefined;
     if (!description && !video && !gallery.length && !image) return undefined;
+    const sensitive = item.isContentClassified === true
+        || (Array.isArray(item.warnInfo) && item.warnInfo.length > 0);
     return {
         title: description || 'TikTok post',
         description,
@@ -335,8 +337,8 @@ function firstPartyData(
         video,
         timestamp: tikTokTimestamp(item.createTime),
         stats: tikTokStats(item),
-        sensitive: item.isContentClassified === true
-            || (Array.isArray(item.warnInfo) && item.warnInfo.length > 0),
+        sensitive,
+        sensitivityTypes: sensitive ? ['nsfw'] : undefined,
         color: platformColors.tiktok,
         platform: 'tiktok',
     };
@@ -396,6 +398,7 @@ async function fetchFxTikTokFallback(
     if (!video && !images.length) return undefined;
 
     const description = truncateText(text(oEmbed?.title), 3_000);
+    const spoilerText = text(activity.spoiler_text);
     return {
         success: true,
         source: 'fallback',
@@ -415,7 +418,8 @@ async function fetchFxTikTokFallback(
             video,
             timestamp: text(activity.created_at) || undefined,
             stats: stripActivityMarkup(activity.content) || undefined,
-            sensitive: Boolean(text(activity.spoiler_text)),
+            sensitive: Boolean(spoilerText),
+            sensitivityTypes: spoilerText ? ['spoiler'] : undefined,
             color: platformColors.tiktok,
             platform: 'tiktok',
         },

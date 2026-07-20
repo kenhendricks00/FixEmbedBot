@@ -74,6 +74,20 @@ def is_nsfw_channel(channel: Any) -> bool:
     return False
 
 
+def channel_visibility_override(
+    overrides: Mapping[tuple[int, int], Mapping[str, Any]],
+    channel: Any,
+) -> Mapping[str, Any] | None:
+    """Return a channel override, falling back to a thread's parent."""
+    guild_id = getattr(getattr(channel, "guild", None), "id", None)
+    for candidate in (channel, getattr(channel, "parent", None)):
+        channel_id = getattr(candidate, "id", None)
+        override = overrides.get((guild_id, channel_id))
+        if override is not None:
+            return override
+    return None
+
+
 async def init_content_visibility(db) -> None:
     """Create persistence for nullable per-channel visibility overrides."""
     await db.execute(

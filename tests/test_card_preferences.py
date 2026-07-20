@@ -5,6 +5,7 @@ from card_preferences import (
     apply_caption_preferences,
     preferences_from_settings,
 )
+from content_visibility import ContentVisibility
 
 
 class CardPreferencesTests(unittest.TestCase):
@@ -68,6 +69,17 @@ class CardPreferencesTests(unittest.TestCase):
             preferences_from_settings(settings, premium=True),
             CardPreferences(show_stats=False, show_hashtags=False),
         )
+
+    def test_core_content_visibility_is_not_premium_gated(self):
+        visibility = ContentVisibility(show_nsfw=True, show_spoilers=False)
+
+        preferences = preferences_from_settings(
+            {},
+            premium=False,
+            content_visibility=visibility,
+        )
+
+        self.assertEqual(preferences.content_visibility, visibility)
 
 
 if __name__ == "__main__":

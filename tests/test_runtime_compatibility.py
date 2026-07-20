@@ -154,7 +154,7 @@ class DiscordRuntimeCompatibilityTests(unittest.TestCase):
         self.assertIn("class CardStyleSettingsView(PremiumControlsPage)", main_source)
         self.assertIn("class TranslationSettingsView(SettingsPageView)", main_source)
         self.assertIn("class ExclusionSettingsView(PremiumControlsPage)", main_source)
-        self.assertIn("preferences_from_settings(guild_settings, premium=premium)", main_source)
+        self.assertIn("preferences_from_settings(", main_source)
         self.assertIn("resolve_translation_language(", main_source)
         self.assertIn(
             'label="Translation", description="Translate every supported platform",',
@@ -170,6 +170,24 @@ class DiscordRuntimeCompatibilityTests(unittest.TestCase):
         self.assertGreaterEqual(
             main_source.count("with_translation_language(item, guild_settings)"),
             3,
+        )
+
+    def test_content_visibility_settings_are_persisted_and_applied_to_cards(self):
+        main_source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+
+        self.assertIn("show_nsfw BOOLEAN DEFAULT FALSE", main_source)
+        self.assertIn("show_spoilers BOOLEAN DEFAULT FALSE", main_source)
+        self.assertIn("await init_content_visibility(client.db)", main_source)
+        self.assertIn("await load_channel_visibility_overrides(client.db)", main_source)
+        self.assertIn("class ContentVisibilitySettingsView(SettingsPageView)", main_source)
+        self.assertIn("class ChannelVisibilitySettingsView(SettingsPageView)", main_source)
+        self.assertGreaterEqual(
+            main_source.count("effective_content_visibility("),
+            3,
+        )
+        self.assertGreaterEqual(
+            main_source.count("content_visibility=content_visibility"),
+            2,
         )
 
     def test_footer_branding_settings_option_is_visibly_premium(self):

@@ -32,6 +32,14 @@ from twitch_embed import fetch_twitch_layout
 from deviantart_embed import fetch_deviantart_layout
 from embed_footer import FooterBranding, escape_component_text
 from card_preferences import preferences_from_settings
+from content_visibility import (
+    channel_visibility_override,
+    init_content_visibility,
+    is_nsfw_channel,
+    load_channel_visibility_overrides,
+    resolve_content_visibility,
+    set_channel_visibility_override,
+)
 from premium_controls import (
     fetch_analytics_summary,
     init_premium_controls,
@@ -267,6 +275,7 @@ client = commands.AutoShardedBot(
 channel_states = {}
 bot_settings = {}
 channel_service_rules = {}
+channel_visibility_overrides = {}
 
 # Rate-limiting configuration
 MESSAGE_LIMIT = 5
@@ -437,6 +446,19 @@ def get_guild_color(guild_id, default=None):
     return custom if custom else (default or discord.Color.blurple())
 
 
+def effective_content_visibility(guild_settings, channel):
+    """Resolve the visibility policy for one Discord channel."""
+    override = channel_visibility_override(
+        channel_visibility_overrides,
+        channel,
+    )
+    return resolve_content_visibility(
+        guild_settings,
+        override,
+        channel_is_nsfw=is_nsfw_channel(channel),
+    )
+
+
 class CommandInfoView(ui.LayoutView):
     """Static Components V2 card for public informational commands."""
 
@@ -457,7 +479,7 @@ async def init_db():
     db = await aiosqlite.connect('fixembed_data.db')
     await db.execute('''CREATE TABLE IF NOT EXISTS channel_states (channel_id INTEGER PRIMARY KEY, state BOOLEAN)''')
     await db.commit()
-    await db.execute('''CREATE TABLE IF NOT EXISTS guild_settings (guild_id INTEGER PRIMARY KEY, enabled_services TEXT, mention_users BOOLEAN, delete_original BOOLEAN DEFAULT TRUE, language TEXT DEFAULT 'en', embed_color TEXT DEFAULT NULL, delivery_mode TEXT DEFAULT 'suppress', media_quality TEXT DEFAULT 'balanced', footer_branding_enabled BOOLEAN DEFAULT FALSE, footer_emoji_id INTEGER DEFAULT NULL)''')
+    await db.execute('''CREATE TABLE IF NOT EXISTS guild_settings (guild_id INTEGER PRIMARY KEY, enabled_services TEXT, mention_users BOOLEAN, delete_original BOOLEAN DEFAULT TRUE, language TEXT DEFAULT 'en', embed_color TEXT DEFAULT NULL, delivery_mode TEXT DEFAULT 'suppress', media_quality TEXT DEFAULT 'balanced', footer_branding_enabled BOOLEAN DEFAULT FALSE, footer_emoji_id INTEGER DEFAULT NULL, show_nsfw BOOLEAN DEFAULT FALSE, show_spoilers BOOLEAN DEFAULT FALSE)''')
     await db.commit()
     await db.execute('''CREATE TABLE IF NOT EXISTS channel_service_rules (guild_id INTEGER, channel_id INTEGER, service TEXT, action TEXT, PRIMARY KEY (guild_id, channel_id, service))''')
     await db.commit()
@@ -534,6 +556,24 @@ async def init_db():
         else:
             raise
 
+    try:
+        await db.execute("ALTER TABLE guild_settings ADD COLUMN show_nsfw BOOLEAN DEFAULT FALSE")
+        await db.commit()
+    except sqlite3.OperationalError as e:
+        if 'duplicate column name' in str(e):
+            pass
+        else:
+            raise
+
+    try:
+        await db.execute("ALTER TABLE guild_settings ADD COLUMN show_spoilers BOOLEAN DEFAULT FALSE")
+        await db.commit()
+    except sqlite3.OperationalError as e:
+        if 'duplicate column name' in str(e):
+            pass
+        else:
+            raise
+
     return db
 
 async def load_channel_states(db):
@@ -547,7 +587,7 @@ async def load_channel_states(db):
                 channel_states[channel.id] = True
 
 async def load_settings(db):
-    async with db.execute('SELECT guild_id, enabled_services, mention_users, delete_original, language, embed_color, delivery_mode, media_quality, footer_branding_enabled, footer_emoji_id FROM guild_settings') as cursor:
+    async with db.execute('SELECT guild_id, enabled_services, mention_users, delete_original, language, embed_color, delivery_mode, media_quality, footer_branding_enabled, footer_emoji_id, show_nsfw, show_spoilers FROM guild_settings') as cursor:
         async for row in cursor:
             guild_id = row[0]
             enabled_services = row[1]
@@ -559,6 +599,8 @@ async def load_settings(db):
             media_quality = row[7] if len(row) > 7 else "balanced"
             footer_branding_enabled = row[8] if len(row) > 8 else False
             footer_emoji_id = row[9] if len(row) > 9 else None
+            show_nsfw = row[10] if len(row) > 10 else False
+            show_spoilers = row[11] if len(row) > 11 else False
             enabled_services_list = ast.literal_eval(enabled_services) if enabled_services else DEFAULT_ENABLED_SERVICES          
             bot_settings[guild_id] = {
                 "enabled_services": enabled_services_list,
@@ -570,6 +612,8 @@ async def load_settings(db):
                 "media_quality": media_quality if media_quality else "balanced",
                 "footer_branding_enabled": bool(footer_branding_enabled),
                 "footer_emoji_id": footer_emoji_id,
+                "show_nsfw": bool(show_nsfw),
+                "show_spoilers": bool(show_spoilers),
             }
 
 async def update_channel_state(db, channel_id, state):
@@ -597,12 +641,14 @@ async def update_setting(
     media_quality="balanced",
     footer_branding_enabled=False,
     footer_emoji_id=None,
+    show_nsfw=False,
+    show_spoilers=False,
 ):
     retries = 5
     for i in range(retries):
         try:
             await db.execute(
-                'INSERT OR REPLACE INTO guild_settings (guild_id, enabled_services, mention_users, delete_original, language, embed_color, delivery_mode, media_quality, footer_branding_enabled, footer_emoji_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT OR REPLACE INTO guild_settings (guild_id, enabled_services, mention_users, delete_original, language, embed_color, delivery_mode, media_quality, footer_branding_enabled, footer_emoji_id, show_nsfw, show_spoilers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     guild_id,
                     repr(enabled_services),
@@ -614,6 +660,8 @@ async def update_setting(
                     media_quality,
                     footer_branding_enabled,
                     footer_emoji_id,
+                    show_nsfw,
+                    show_spoilers,
                 ),
             )
             await db.commit()
@@ -655,6 +703,7 @@ async def on_ready():
         except Exception as error:
             logging.exception("Pixiv relay startup failed: %s", error)
     client.db = await init_db()
+    await init_content_visibility(client.db)
     await init_premium_controls(client.db)
     await migrate_youtube_service_default(client.db)
     await migrate_pinterest_service_default(client.db)
@@ -674,6 +723,9 @@ async def on_ready():
             },
         ).update(controls)
     await load_channel_service_rules(client.db)
+    channel_visibility_overrides.update(
+        await load_channel_visibility_overrides(client.db)
+    )
     if PREMIUM_SKU_ID:
         try:
             await reconcile_supporter_roles(
@@ -871,7 +923,15 @@ async def send_components_v2_links(interaction, links):
     )
     premium = await is_guild_premium(guild_id) if guild_id is not None else False
     footer_branding = get_footer_branding(interaction.guild, guild_settings, premium)
-    card_preferences = preferences_from_settings(guild_settings, premium=premium)
+    content_visibility = effective_content_visibility(
+        guild_settings,
+        interaction.channel,
+    )
+    card_preferences = preferences_from_settings(
+        guild_settings,
+        premium=premium,
+        content_visibility=content_visibility,
+    )
 
     await interaction.response.defer()
     for item in links:
@@ -1126,6 +1186,8 @@ class SettingsPageView(ui.LayoutView):
             self.settings.get("media_quality", "balanced"),
             self.settings.get("footer_branding_enabled", False),
             self.settings.get("footer_emoji_id"),
+            self.settings.get("show_nsfw", False),
+            self.settings.get("show_spoilers", False),
         )
 
     def render_page(self, *, title, description, status=None, controls=(), accent_color=None, footer="Settings"):
@@ -1168,6 +1230,8 @@ class SettingsDropdown(ui.Select):
             discord.SelectOption(label=get_text(lang, "delivery_method"), description=get_text(lang, "delivery_method_toggle"), value="Delivery Method", emoji="📨"),
             discord.SelectOption(label=get_text(lang, "service_settings"), description=get_text(lang, "service_settings_desc"), value="Service Settings", emoji="🧩"),
             discord.SelectOption(label=get_text(lang, "quality_profile"), description=get_text(lang, "quality_profile_desc"), value="Quality Profile", emoji="🎞️"),
+            discord.SelectOption(label=get_text(lang, "content_visibility"), description=get_text(lang, "content_visibility_desc"), value="Content Visibility", emoji="👁️"),
+            discord.SelectOption(label=get_text(lang, "channel_visibility"), description=get_text(lang, "channel_visibility_desc"), value="Channel Visibility", emoji="🛡️"),
             discord.SelectOption(label=get_text(lang, "channel_rules"), description=get_text(lang, "channel_rules_desc"), value="Channel Rules", emoji="🧭"),
             discord.SelectOption(label=get_text(lang, "reliability_status"), description=get_text(lang, "reliability_status_desc"), value="Reliability Status", emoji="📊"),
             discord.SelectOption(label=get_text(lang, "language"), description=get_text(lang, "language_desc"), value="Language", emoji="🌐"),
@@ -1252,6 +1316,8 @@ class SettingsDropdown(ui.Select):
             "Delivery Method": DeliveryMethodSettingsView,
             "Service Settings": ServiceSettingsView,
             "Quality Profile": QualitySettingsView,
+            "Content Visibility": ContentVisibilitySettingsView,
+            "Channel Visibility": ChannelVisibilitySettingsView,
             "Channel Rules": ChannelRulesSettingsView,
             "Language": LanguageSettingsView,
             "Debug": DebugSettingsView,
@@ -1360,6 +1426,215 @@ class QualitySettingsView(SettingsPageView):
             controls=((QualitySelect(self),),),
             footer="Media quality",
         )
+
+
+class ContentVisibilitySettingsView(SettingsPageView):
+    def __init__(self, interaction, settings):
+        super().__init__(interaction, settings)
+        self.render()
+
+    def render(self):
+        show_nsfw = bool(self.settings.get("show_nsfw", False))
+        show_spoilers = bool(self.settings.get("show_spoilers", False))
+        nsfw_button = discord.ui.Button(
+            label=get_text(
+                self.lang,
+                "content_visibility_hide_nsfw" if show_nsfw
+                else "content_visibility_show_nsfw",
+            ),
+            style=discord.ButtonStyle.green if show_nsfw else discord.ButtonStyle.secondary,
+        )
+        nsfw_button.callback = self.toggle_nsfw
+        spoilers_button = discord.ui.Button(
+            label=get_text(
+                self.lang,
+                "content_visibility_hide_spoilers" if show_spoilers
+                else "content_visibility_show_spoilers",
+            ),
+            style=discord.ButtonStyle.green if show_spoilers else discord.ButtonStyle.secondary,
+        )
+        spoilers_button.callback = self.toggle_spoilers
+        self.render_page(
+            title=get_text(self.lang, "content_visibility_title"),
+            description=get_text(self.lang, "content_visibility_instructions"),
+            status=get_text(
+                self.lang,
+                "content_visibility_status",
+                nsfw_status="✅" if show_nsfw else "❌",
+                spoiler_status="✅" if show_spoilers else "❌",
+            ),
+            controls=((nsfw_button, spoilers_button),),
+            footer="Content visibility",
+        )
+
+    async def toggle_nsfw(self, interaction):
+        self.settings["show_nsfw"] = not bool(
+            self.settings.get("show_nsfw", False)
+        )
+        await self.save()
+        self.render()
+        await interaction.response.edit_message(view=self)
+
+    async def toggle_spoilers(self, interaction):
+        self.settings["show_spoilers"] = not bool(
+            self.settings.get("show_spoilers", False)
+        )
+        await self.save()
+        self.render()
+        await interaction.response.edit_message(view=self)
+
+
+class ChannelVisibilityChannelSelect(ui.Select):
+    def __init__(self, page):
+        options = [
+            discord.SelectOption(
+                label=channel.name[:100],
+                value=str(channel.id),
+                default=channel.id == page.selected_channel_id,
+            )
+            for channel in page.interaction.guild.text_channels[:25]
+        ]
+        super().__init__(
+            placeholder=get_text(page.lang, "channel_visibility_pick_channel"),
+            options=options,
+        )
+        self.page = page
+
+    async def callback(self, interaction):
+        self.page.selected_channel_id = int(self.values[0])
+        self.page.load_selected_override()
+        self.page.render()
+        await interaction.response.edit_message(view=self.page)
+
+
+class ChannelVisibilityValueSelect(ui.Select):
+    VALUES = {
+        "inherit": None,
+        "show": True,
+        "hide": False,
+    }
+
+    def __init__(self, page, setting_name, placeholder_key):
+        current = getattr(page, setting_name)
+        options = [
+            discord.SelectOption(
+                label=get_text(page.lang, f"channel_visibility_{value}"),
+                value=value,
+                default=resolved is current,
+            )
+            for value, resolved in self.VALUES.items()
+        ]
+        super().__init__(
+            placeholder=get_text(page.lang, placeholder_key),
+            options=options,
+        )
+        self.page = page
+        self.setting_name = setting_name
+
+    async def callback(self, interaction):
+        setattr(self.page, self.setting_name, self.VALUES[self.values[0]])
+        self.page.render()
+        await interaction.response.edit_message(view=self.page)
+
+
+class ChannelVisibilitySettingsView(SettingsPageView):
+    def __init__(self, interaction, settings):
+        super().__init__(interaction, settings)
+        channels = interaction.guild.text_channels[:25]
+        channel_ids = {channel.id for channel in channels}
+        self.selected_channel_id = (
+            interaction.channel.id
+            if interaction.channel and interaction.channel.id in channel_ids
+            else channels[0].id
+        )
+        self.show_nsfw = None
+        self.show_spoilers = None
+        self.load_selected_override()
+        self.render()
+
+    def load_selected_override(self):
+        override = channel_visibility_overrides.get(
+            (self.interaction.guild.id, self.selected_channel_id),
+            {},
+        )
+        self.show_nsfw = override.get("show_nsfw")
+        self.show_spoilers = override.get("show_spoilers")
+
+    @staticmethod
+    def override_label(value):
+        if value is True:
+            return "Show"
+        if value is False:
+            return "Hide"
+        return "Inherit"
+
+    def render(self):
+        channel = self.interaction.guild.get_channel(self.selected_channel_id)
+        draft_override = {
+            "show_nsfw": self.show_nsfw,
+            "show_spoilers": self.show_spoilers,
+        }
+        effective = resolve_content_visibility(
+            self.settings,
+            draft_override,
+            channel_is_nsfw=is_nsfw_channel(channel),
+        )
+        apply_button = discord.ui.Button(
+            label=get_text(self.lang, "channel_visibility_apply"),
+            style=discord.ButtonStyle.green,
+        )
+        apply_button.callback = self.apply_override
+        self.render_page(
+            title=get_text(self.lang, "channel_visibility_title"),
+            description=get_text(self.lang, "channel_visibility_instructions"),
+            status=get_text(
+                self.lang,
+                "channel_visibility_status",
+                channel=channel.mention,
+                nsfw_override=self.override_label(self.show_nsfw),
+                nsfw_effective=self.override_label(effective.show_nsfw),
+                spoiler_override=self.override_label(self.show_spoilers),
+                spoiler_effective=self.override_label(effective.show_spoilers),
+            ),
+            controls=(
+                (ChannelVisibilityChannelSelect(self),),
+                (
+                    ChannelVisibilityValueSelect(
+                        self,
+                        "show_nsfw",
+                        "channel_visibility_nsfw",
+                    ),
+                ),
+                (
+                    ChannelVisibilityValueSelect(
+                        self,
+                        "show_spoilers",
+                        "channel_visibility_spoilers",
+                    ),
+                ),
+                (apply_button,),
+            ),
+            footer="Channel visibility",
+        )
+
+    async def apply_override(self, interaction):
+        key = (self.interaction.guild.id, self.selected_channel_id)
+        await set_channel_visibility_override(
+            client.db,
+            guild_id=key[0],
+            channel_id=key[1],
+            show_nsfw=self.show_nsfw,
+            show_spoilers=self.show_spoilers,
+        )
+        if self.show_nsfw is None and self.show_spoilers is None:
+            channel_visibility_overrides.pop(key, None)
+        else:
+            channel_visibility_overrides[key] = {
+                "show_nsfw": self.show_nsfw,
+                "show_spoilers": self.show_spoilers,
+            }
+        self.render()
+        await interaction.response.edit_message(view=self)
 
 
 class LanguageSelect(ui.Select):
@@ -2076,7 +2351,8 @@ async def delivery(interaction: discord.Interaction, mode: app_commands.Choice[s
         client.db, guild_id, settings_obj["enabled_services"], settings_obj["mention_users"],
         settings_obj.get("delete_original", True), settings_obj.get("language", "en"),
         settings_obj.get("embed_color"), settings_obj["delivery_mode"], settings_obj.get("media_quality", "balanced"),
-        settings_obj.get("footer_branding_enabled", False), settings_obj.get("footer_emoji_id")
+        settings_obj.get("footer_branding_enabled", False), settings_obj.get("footer_emoji_id"),
+        settings_obj.get("show_nsfw", False), settings_obj.get("show_spoilers", False)
     )
     view = SettingsNoticeView(
         title="Delivery Method",
@@ -2108,7 +2384,8 @@ async def quality(interaction: discord.Interaction, profile: app_commands.Choice
         client.db, guild_id, settings_obj["enabled_services"], settings_obj["mention_users"],
         settings_obj.get("delete_original", True), settings_obj.get("language", "en"),
         settings_obj.get("embed_color"), settings_obj.get("delivery_mode", "suppress"), settings_obj["media_quality"],
-        settings_obj.get("footer_branding_enabled", False), settings_obj.get("footer_emoji_id")
+        settings_obj.get("footer_branding_enabled", False), settings_obj.get("footer_emoji_id"),
+        settings_obj.get("show_nsfw", False), settings_obj.get("show_spoilers", False)
     )
     view = SettingsNoticeView(
         title="Media Quality",
@@ -2194,7 +2471,15 @@ async def on_message(message):
     if should_skip_automatic(message, guild_settings, premium=premium):
         return
     footer_branding = get_footer_branding(message.guild, guild_settings, premium)
-    card_preferences = preferences_from_settings(guild_settings, premium=premium)
+    content_visibility = effective_content_visibility(
+        guild_settings,
+        message.channel,
+    )
+    card_preferences = preferences_from_settings(
+        guild_settings,
+        premium=premium,
+        content_visibility=content_visibility,
+    )
 
     # Premium perk: skip bot messages only if NOT premium
     if message.author.bot and not premium:
@@ -2375,6 +2660,8 @@ async def on_guild_join(guild):
             "media_quality": "balanced",
             "footer_branding_enabled": False,
             "footer_emoji_id": None,
+            "show_nsfw": False,
+            "show_spoilers": False,
         }
         await update_setting(
             client.db,
@@ -2388,6 +2675,8 @@ async def on_guild_join(guild):
             bot_settings[guild_id].get("media_quality", "balanced"),
             bot_settings[guild_id].get("footer_branding_enabled", False),
             bot_settings[guild_id].get("footer_emoji_id"),
+            bot_settings[guild_id].get("show_nsfw", False),
+            bot_settings[guild_id].get("show_spoilers", False),
         )
     if await send_onboarding_dm(guild):
         logging.info("Sent onboarding DM for guild %s", guild_id)
@@ -2449,7 +2738,9 @@ class EmbedColorModal(ui.Modal, title="Set Embed Color"):
                 self.settings.get("delivery_mode", "suppress"),
                 self.settings.get("media_quality", "balanced"),
                 self.settings.get("footer_branding_enabled", False),
-                self.settings.get("footer_emoji_id"))
+                self.settings.get("footer_emoji_id"),
+                self.settings.get("show_nsfw", False),
+                self.settings.get("show_spoilers", False))
             view = SettingsNoticeView(
                 title=get_text(lang, "embed_color_title"),
                 description=get_text(lang, "embed_color_reset"),
@@ -2475,7 +2766,9 @@ class EmbedColorModal(ui.Modal, title="Set Embed Color"):
                         self.settings.get("delivery_mode", "suppress"),
                         self.settings.get("media_quality", "balanced"),
                         self.settings.get("footer_branding_enabled", False),
-                        self.settings.get("footer_emoji_id"))
+                        self.settings.get("footer_emoji_id"),
+                        self.settings.get("show_nsfw", False),
+                        self.settings.get("show_spoilers", False))
                     view = SettingsNoticeView(
                         title=get_text(lang, "embed_color_title"),
                         description=get_text(lang, "embed_color_set", color=color_str),

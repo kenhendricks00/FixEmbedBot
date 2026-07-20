@@ -39,11 +39,15 @@ def apply_caption_preferences(text: str, preferences: CardPreferences) -> str:
 
 
 def preferences_from_settings(
-    settings: Mapping[str, Any], *, premium: bool
+    settings: Mapping[str, Any],
+    *,
+    premium: bool,
+    content_visibility: ContentVisibility | None = None,
 ) -> CardPreferences:
     """Resolve untrusted persisted settings only after entitlement validation."""
+    visibility = content_visibility or ContentVisibility()
     if not premium:
-        return CardPreferences()
+        return CardPreferences(content_visibility=visibility)
     accent_color = None
     color = settings.get("embed_color")
     if isinstance(color, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
@@ -56,4 +60,5 @@ def preferences_from_settings(
         show_stats=bool(settings.get("card_show_stats", True)),
         show_hashtags=bool(settings.get("card_show_hashtags", True)),
         caption_mode=caption_mode,
+        content_visibility=visibility,
     )

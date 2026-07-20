@@ -60,6 +60,7 @@ interface RedditPost {
     score: number;
     num_comments: number;
     over_18?: boolean;
+    spoiler?: boolean;
 }
 
 interface RedditCommunityResponse {
@@ -373,6 +374,12 @@ async function recoverFromRedditCrawlerPage(
         ? new URL(permalink, 'https://www.reddit.com').toString()
         : `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/comments/${encodeURIComponent(postId)}/`;
 
+    const nsfw = htmlAttribute(postTag, 'data-nsfw') === 'true';
+    const spoiler = htmlAttribute(postTag, 'data-spoiler') === 'true';
+    const sensitivityTypes = [
+        ...(nsfw ? ['nsfw' as const] : []),
+        ...(spoiler ? ['spoiler' as const] : []),
+    ];
     return {
         success: true,
         source: 'first-party',
@@ -393,7 +400,10 @@ async function recoverFromRedditCrawlerPage(
                 ? new Date(timestampMs).toISOString()
                 : undefined,
             sections: linkedArticleSection(articleUrl),
-            sensitive: htmlAttribute(postTag, 'data-nsfw') === 'true',
+            sensitive: nsfw || spoiler,
+            sensitivityTypes: sensitivityTypes.length
+                ? sensitivityTypes
+                : undefined,
         },
     };
 }
@@ -638,6 +648,10 @@ export const redditHandler: PlatformHandler = {
                 image = await fetchArticleImage(articleUrl);
             }
             const sections = linkedArticleSection(articleUrl);
+            const sensitivityTypes = [
+                ...(post.over_18 === true ? ['nsfw' as const] : []),
+                ...(post.spoiler === true ? ['spoiler' as const] : []),
+            ];
 
             return {
                 success: true,
@@ -658,7 +672,10 @@ export const redditHandler: PlatformHandler = {
                     platform: 'reddit',
                     stats, // Consistent stats via oEmbed like other platforms
                     sections,
-                    sensitive: post.over_18 === true,
+                    sensitive: sensitivityTypes.length > 0,
+                    sensitivityTypes: sensitivityTypes.length
+                        ? sensitivityTypes
+                        : undefined,
                 },
             };
         } catch (error) {

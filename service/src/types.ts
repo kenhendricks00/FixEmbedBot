@@ -37,6 +37,7 @@ export type Platform =
     | 'deviantart';
 
 export type XVerificationBadge = 'premium' | 'organization' | 'government';
+export type SensitivityType = 'nsfw' | 'spoiler';
 
 // Embed data returned by handlers
 export interface EmbedData {
@@ -72,6 +73,8 @@ export interface EmbedData {
     mediaOrigin?: 'post' | 'quote';
     /** True when source-platform metadata says media should be hidden until revealed. */
     sensitive?: boolean;
+    /** Independent reasons that determine which visibility control applies. */
+    sensitivityTypes?: SensitivityType[];
     /** Source language supplied by a platform when available. */
     sourceLanguage?: string;
     /** Present when FixEmbed replaced primary or quoted-post text with a requested translation. */

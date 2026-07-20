@@ -4,6 +4,7 @@ import aiosqlite
 
 from content_visibility import (
     ContentVisibility,
+    channel_visibility_override,
     init_content_visibility,
     is_nsfw_channel,
     load_channel_visibility_overrides,
@@ -67,6 +68,25 @@ class ContentVisibilityPolicyTests(unittest.TestCase):
 
         self.assertTrue(
             is_nsfw_channel(Channel(parent=Channel(nsfw=True)))
+        )
+
+    def test_thread_inherits_visibility_override_from_its_parent_channel(self):
+        class Item:
+            def __init__(self, item_id, *, guild=None, parent=None):
+                self.id = item_id
+                self.guild = guild
+                self.parent = parent
+
+        guild = Item(10)
+        parent = Item(20, guild=guild)
+        thread = Item(30, guild=guild, parent=parent)
+        overrides = {
+            (10, 20): {"show_nsfw": False, "show_spoilers": True},
+        }
+
+        self.assertEqual(
+            channel_visibility_override(overrides, thread),
+            overrides[(10, 20)],
         )
 
 
