@@ -1484,24 +1484,33 @@ class ContentVisibilitySettingsView(SettingsPageView):
         await interaction.response.edit_message(view=self)
 
 
-class ChannelVisibilityChannelSelect(ui.Select):
+class ChannelVisibilityChannelSelect(ui.ChannelSelect):
     def __init__(self, page):
-        options = [
-            discord.SelectOption(
-                label=channel.name[:100],
-                value=str(channel.id),
-                default=channel.id == page.selected_channel_id,
-            )
-            for channel in page.interaction.guild.text_channels[:25]
-        ]
         super().__init__(
             placeholder=get_text(page.lang, "channel_visibility_pick_channel"),
-            options=options,
+            channel_types=[
+                discord.ChannelType.text,
+                discord.ChannelType.news,
+                discord.ChannelType.voice,
+                discord.ChannelType.stage_voice,
+                discord.ChannelType.forum,
+                discord.ChannelType.media,
+                discord.ChannelType.news_thread,
+                discord.ChannelType.public_thread,
+                discord.ChannelType.private_thread,
+            ],
+            min_values=1,
+            max_values=1,
+            default_values=(
+                [page.selected_channel]
+                if page.selected_channel is not None
+                else []
+            ),
         )
         self.page = page
 
     async def callback(self, interaction):
-        self.page.selected_channel_id = int(self.values[0])
+        self.page.selected_channel_id = self.values[0].id
         self.page.load_selected_override()
         self.page.render()
         await interaction.response.edit_message(view=self.page)
@@ -1527,6 +1536,7 @@ class ChannelVisibilityValueSelect(ui.Select):
         super().__init__(
             placeholder=get_text(page.lang, placeholder_key),
             options=options,
+            disabled=page.selected_channel is None,
         )
         self.page = page
         self.setting_name = setting_name
@@ -1540,19 +1550,25 @@ class ChannelVisibilityValueSelect(ui.Select):
 class ChannelVisibilitySettingsView(SettingsPageView):
     def __init__(self, interaction, settings):
         super().__init__(interaction, settings)
-        channels = interaction.guild.text_channels[:25]
-        channel_ids = {channel.id for channel in channels}
-        self.selected_channel_id = (
-            interaction.channel.id
-            if interaction.channel and interaction.channel.id in channel_ids
-            else channels[0].id
-        )
+        self.selected_channel_id = getattr(interaction.channel, "id", None)
         self.show_nsfw = None
         self.show_spoilers = None
         self.load_selected_override()
         self.render()
 
+    @property
+    def selected_channel(self):
+        if self.selected_channel_id is None:
+            return None
+        return self.interaction.guild.get_channel_or_thread(
+            self.selected_channel_id
+        )
+
     def load_selected_override(self):
+        if self.selected_channel_id is None:
+            self.show_nsfw = None
+            self.show_spoilers = None
+            return
         override = channel_visibility_overrides.get(
             (self.interaction.guild.id, self.selected_channel_id),
             {},
@@ -1569,7 +1585,7 @@ class ChannelVisibilitySettingsView(SettingsPageView):
         return "Inherit"
 
     def render(self):
-        channel = self.interaction.guild.get_channel(self.selected_channel_id)
+        channel = self.selected_channel
         draft_override = {
             "show_nsfw": self.show_nsfw,
             "show_spoilers": self.show_spoilers,
@@ -1582,6 +1598,7 @@ class ChannelVisibilitySettingsView(SettingsPageView):
         apply_button = discord.ui.Button(
             label=get_text(self.lang, "channel_visibility_apply"),
             style=discord.ButtonStyle.green,
+            disabled=channel is None,
         )
         apply_button.callback = self.apply_override
         self.render_page(
@@ -1590,7 +1607,11 @@ class ChannelVisibilitySettingsView(SettingsPageView):
             status=get_text(
                 self.lang,
                 "channel_visibility_status",
-                channel=channel.mention,
+                channel=(
+                    channel.mention
+                    if channel is not None
+                    else get_text(self.lang, "channel_visibility_unavailable")
+                ),
                 nsfw_override=self.override_label(self.show_nsfw),
                 nsfw_effective=self.override_label(effective.show_nsfw),
                 spoiler_override=self.override_label(self.show_spoilers),
@@ -1618,6 +1639,10 @@ class ChannelVisibilitySettingsView(SettingsPageView):
         )
 
     async def apply_override(self, interaction):
+        if self.selected_channel is None:
+            self.render()
+            await interaction.response.edit_message(view=self)
+            return
         key = (self.interaction.guild.id, self.selected_channel_id)
         await set_channel_visibility_override(
             client.db,

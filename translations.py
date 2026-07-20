@@ -821,6 +821,7 @@ UI_FALLBACK_KEYS = {
     "channel_visibility_inherit": "Inherit",
     "channel_visibility_show": "Show",
     "channel_visibility_hide": "Hide",
+    "channel_visibility_unavailable": "Select an available channel",
     "channel_visibility_status": "Channel: {channel}\nNSFW override: **{nsfw_override}** (effective: **{nsfw_effective}**)\nSpoiler override: **{spoiler_override}** (effective: **{spoiler_effective}**)",
     "reliability_status": "Reliability Status",
     "reliability_status_desc": "View queue and processing stats",

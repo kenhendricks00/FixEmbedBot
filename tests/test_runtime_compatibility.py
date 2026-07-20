@@ -137,6 +137,17 @@ class DiscordRuntimeCompatibilityTests(unittest.TestCase):
         self.assertIn("premium = await is_guild_premium(guild_id)", settings_section)
         self.assertIn("SettingsView(interaction, guild_settings, premium=premium)", settings_section)
 
+    def test_channel_visibility_uses_unbounded_native_channel_selection(self):
+        main_source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+        visibility_section = main_source.split(
+            "class ChannelVisibilityChannelSelect", 1
+        )[1].split("class LanguageSelect", 1)[0]
+
+        self.assertIn("(ui.ChannelSelect):", visibility_section)
+        self.assertIn("get_channel_or_thread", visibility_section)
+        self.assertNotIn("text_channels[:25]", visibility_section)
+        self.assertIn("disabled=channel is None", visibility_section)
+
     def test_premium_footer_branding_is_persisted_and_propagated(self):
         main_source = Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
 
