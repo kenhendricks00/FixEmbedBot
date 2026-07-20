@@ -173,7 +173,7 @@ export const indexHtml = `<!DOCTYPE html>
                 <div class="feature-card">
                     <div class="feature-icon"><i class="fas fa-images"></i></div>
                     <h3>Rich, Safer Media</h3>
-                    <p>Preserves mixed media, complete galleries, and platform context. Source-marked sensitive media is automatically hidden behind Discord spoilers.</p>
+                    <p>Preserves mixed media, complete galleries, and platform context. Source-marked NSFW and spoiler content is hidden by default, with independent server controls and channel overrides. NSFW channels default to showing both.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i class="fas fa-bolt"></i></div>
@@ -2430,7 +2430,7 @@ export const docsHtml = `<!DOCTYPE html>
                             <tr><td>DeviantArt Deviations</td><td>deviantart.com/*/art/*, sta.sh</td></tr>
                         </tbody>
                     </table>
-                    <p style="color: var(--text-secondary); margin-top: 1rem;">Cards preserve mixed media, galleries, creator identity, and platform-specific context when available. Source-marked sensitive media is hidden behind Discord spoilers. Translation requests work across every supported platform, replace the primary post text when successful, and preserve a source-language link.</p>
+                    <p style="color: var(--text-secondary); margin-top: 1rem;">Cards preserve mixed media, galleries, creator identity, and platform-specific context when available. Source-marked NSFW and spoiler content is hidden by default, with independent server controls and channel overrides. NSFW channels default to showing both. Translation requests work across every supported platform, replace the primary post text when successful, and preserve a source-language link.</p>
                 </div>
             </div>
         </div>

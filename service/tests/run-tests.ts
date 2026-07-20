@@ -6084,7 +6084,14 @@ const tests: TestCase[] = [
             assert.match(indexHtml, /<h3>Twitch<\/h3>/);
             assert.match(indexHtml, /<h3>DeviantArt<\/h3>/);
             assert.match(indexHtml, /public deviations and Sta\.sh/i);
-            assert.match(indexHtml, /sensitive media is automatically hidden behind Discord spoilers/i);
+            assert.match(
+                indexHtml,
+                /independent server controls and channel overrides/i,
+            );
+            assert.match(
+                indexHtml,
+                /NSFW channels default to showing both/i,
+            );
             assert.match(docsHtml, /TikTok Videos/);
             assert.match(docsHtml, /Tumblr Posts/);
             assert.match(docsHtml, /DeviantArt Deviations/);

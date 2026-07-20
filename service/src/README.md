@@ -26,7 +26,7 @@ A unified embed service for Discord, Telegram, and other platforms. Built with C
 - **Rich Embeds**: Consistent `FixEmbed • [emoji] Platform` branding across all platforms
 - **Video Playback**: Native video support for Twitter, Instagram Reels, Threads, Reddit, and Bilibili
 - **Mixed Media and Galleries**: Complete image/video collections retain source order when available
-- **Sensitive Media**: Source-marked sensitive content is hidden behind Discord spoilers
+- **Sensitive Media**: Source-marked NSFW and spoiler content is hidden by default, with independent server controls, per-channel overrides, and both types shown by default in Discord NSFW channels
 - **Platform Context**: Creator identity, timestamps, engagement, games, communities, and other source-specific context are preserved when available
 - **Post Translation**: `lang=<two-letter-code>` works across every supported platform, replaces the primary post text when successful, and preserves source-language metadata for the card footer
 - **Engagement Stats**: Metrics displayed via oEmbed (💬 comments, ❤️ likes, � reposts, 👁 views)

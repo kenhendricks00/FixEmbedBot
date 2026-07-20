@@ -1,5 +1,11 @@
 ## Unreleased
 
+#### **Content visibility controls**
+- Added independent server-wide **Show NSFW** and **Show Spoilers** controls for rich cards.
+- Added per-channel overrides that can inherit, show, or hide each content type independently.
+- Made Discord NSFW channels show both content types by default while allowing explicit channel overrides to take precedence.
+- Preserved separate NSFW and spoiler classifications from Reddit and TikTok source metadata.
+
 #### **Reddit link cards**
 - Expanded Reddit link posts with their linked article, preview image, subreddit identity, publication time, upvotes, and comments.
 - Corrected subreddit avatars to use Reddit's community icon instead of unrelated legacy header artwork.

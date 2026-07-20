@@ -35,7 +35,7 @@ Send a message containing a <code>X/Twitter</code>, <code>Instagram</code>, <cod
 # 🌟 Why Choose FixEmbed?
 - **Comprehensive Platform Support**: Supports X/Twitter, Instagram, Reddit, Threads, Pixiv, Bluesky, Bilibili, YouTube Community Posts, Pinterest Pins, TikTok videos, Tumblr posts, Twitch clips/VODs/channels, and public DeviantArt deviations and Sta.sh links.
 - **Rich Platform-Aware Cards**: Preserves creator identity, platform-specific context, mixed image/video posts, and complete media galleries when the source exposes them.
-- **Sensitive-Media Safety**: Source-marked sensitive or NSFW media is automatically hidden behind Discord spoilers.
+- **Sensitive-Media Controls**: Source-marked NSFW and spoiler media is hidden by default. Servers can show each type independently, channels can override either setting, and Discord NSFW channels show both by default.
 - **User-Installable**: Install to your personal account and use `/fix` or the context menu anywhere—even in servers where the bot isn't added!
 - **User-Friendly Configuration**: Easy setup with customizable settings for individual servers.
 - **Reliable Performance**: Ensures consistent embed functionality across all platforms.
