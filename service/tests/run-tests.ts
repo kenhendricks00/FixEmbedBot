@@ -1935,6 +1935,126 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'instagramHandler never downgrades a reel to a poster-only success',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const requested: string[] = [];
+            const sourceUrl = 'https://www.instagram.com/reel/Da-viZXsdih/';
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                requested.push(url);
+                if (url.includes('/p/Da-viZXsdih/embed/captioned/')) {
+                    return new Response([
+                        '<span class="UsernameText">_mohan_choudhary_</span>',
+                        '<script>{"display_url":"https:\\/\\/scontent.example.cdninstagram.com\\/poster.jpg"}</script>',
+                    ].join(''), { status: 200 });
+                }
+                if (url === sourceUrl) {
+                    return new Response([
+                        '<meta name="twitter:title" content="_mohan_choudhary_ (@_mohan_choudhary_) &#x2022; Instagram reel" />',
+                        '<meta property="og:image" content="https://scontent.example.cdninstagram.com/poster.jpg" />',
+                        '<script>{"code":"Da-viZXsdih","contentUrl":"https:\\/\\/scontent.example.cdninstagram.com\\/reel.mp4?x=1\\u0026y=2"}</script>',
+                    ].join(''), { status: 200 });
+                }
+                if (url.includes('vxinstagram.com/reel/Da-viZXsdih')) {
+                    return new Response('', { status: 404 });
+                }
+                if (url.includes('kkinstagram.com/reel/Da-viZXsdih')) {
+                    return new Response('', { status: 404 });
+                }
+                if (url.includes('snapsave.app')) {
+                    return new Response('', { status: 503 });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await instagramHandler.handle(sourceUrl, env);
+
+                assert.equal(response.success, true);
+                assert.equal(response.source, 'first-party');
+                assert.equal(response.data?.image, 'https://scontent.example.cdninstagram.com/poster.jpg');
+                assert.equal(
+                    response.data?.video?.url,
+                    'https://fixembed.app/video/instagram?url=https%3A%2F%2Fscontent.example.cdninstagram.com%2Freel.mp4%3Fx%3D1%26y%3D2',
+                );
+                assert.equal(
+                    requested.some((request) => request.includes('snapsave.app')),
+                    false,
+                );
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
+        name: 'instagramHandler rejects a Vx poster as recovered reel media',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const requested: string[] = [];
+            const sourceUrl = 'https://www.instagram.com/reel/PosterOnlyReel/';
+            const photoHtml = '<a href="https://d.rapidcdn.app/d?token=photo">Download Photo</a>';
+            const decodedPhotoResponse = [
+                'document.getElementById("download-section").innerHTML = "',
+                photoHtml,
+                '"; document.getElementById("inputData").remove();',
+            ].join('');
+            const encodedPhotoResponse = Array.from(decodedPhotoResponse)
+                .map((character) => String(character.charCodeAt(0)))
+                .join('a');
+            const snapSavePhotoResponse = [
+                'decodeURIComponent(escape(r))}("',
+                encodedPhotoResponse,
+                '","unused","0123456789a","0","10","unused"))',
+            ].join('');
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                requested.push(url);
+                if (url.includes('/p/PosterOnlyReel/embed/captioned/')) {
+                    return new Response([
+                        '<span class="UsernameText">creator</span>',
+                        '<script>{"display_url":"https:\\/\\/scontent.example.cdninstagram.com\\/poster.jpg"}</script>',
+                    ].join(''), { status: 200 });
+                }
+                if (url === sourceUrl) {
+                    return new Response([
+                        '<script>{"code" : "PosterOnlyReel","display_url":"https:\\/\\/scontent.example.cdninstagram.com\\/poster.jpg"}</script>',
+                        '<script>{"code":"AdjacentReel","contentUrl":"https:\\/\\/scontent.example.cdninstagram.com\\/decoy.mp4"}</script>',
+                    ].join(''), { status: 200 });
+                }
+                if (url.includes('vxinstagram.com/reel/PosterOnlyReel')) {
+                    return new Response(
+                        '<meta property="og:image" content="https://vxinstagram.com/generated/PosterOnlyReel.jpg">',
+                        { status: 200 },
+                    );
+                }
+                if (url.includes('kkinstagram.com/reel/PosterOnlyReel')) {
+                    return new Response('poster', {
+                        status: 206,
+                        headers: { 'Content-Type': 'image/jpeg' },
+                    });
+                }
+                if (url.includes('snapsave.app')) {
+                    return new Response(snapSavePhotoResponse, { status: 200 });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await instagramHandler.handle(sourceUrl, env);
+
+                assert.equal(response.success, false);
+                assert.equal(response.data, undefined);
+                assert.equal(
+                    requested.some((request) => request.includes('snapsave.app')),
+                    true,
+                );
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'instagramHandler recovers the owner avatar from escaped reel metadata',
         run: async () => {
             const originalFetch = globalThis.fetch;
@@ -2788,7 +2908,7 @@ const tests: TestCase[] = [
         run: async () => {
             const originalFetch = globalThis.fetch;
             const originalInfo = console.info;
-            const upstreamUrl = 'https://kkinstagram.com/reel/DWm-w02iSXP/';
+            const upstreamUrl = 'https://d.rapidcdn.app/v2?token=private';
             let forwardedRange: string | null = null;
             const telemetry: Array<[string, Record<string, unknown>]> = [];
             globalThis.fetch = async (input, init) => {
@@ -2797,7 +2917,7 @@ const tests: TestCase[] = [
                 return new Response('video-chunk', {
                     status: 206,
                     headers: {
-                        'Content-Type': 'video/mp4',
+                        'Content-Type': 'application/octet-stream',
                         'Content-Length': '11',
                         'Content-Range': 'bytes 0-10/4044060',
                     },
@@ -2833,18 +2953,18 @@ const tests: TestCase[] = [
                     'instagram_video_relay',
                     {
                         requestId,
-                        provider: 'kkinstagram',
+                        provider: 'snapsave',
                         outcome: 'stream_started',
                         requestedRange: true,
                         upstreamStatus: 206,
-                        upstreamMediaType: 'video/mp4',
+                        upstreamMediaType: 'other',
                         hasContentRange: true,
                         contentLength: 11,
                         upstreamResponseMs: telemetry[0]?.[1].upstreamResponseMs,
                     },
                 ]]);
                 assert.equal(typeof telemetry[0]?.[1].upstreamResponseMs, 'number');
-                assert.equal(JSON.stringify(telemetry).includes('DWm-w02iSXP'), false);
+                assert.equal(JSON.stringify(telemetry).includes('private'), false);
                 assert.equal(JSON.stringify(telemetry).includes(upstreamUrl), false);
             } finally {
                 globalThis.fetch = originalFetch;
@@ -2895,6 +3015,40 @@ const tests: TestCase[] = [
                 assert.equal(typeof telemetry[0]?.[1].upstreamResponseMs, 'number');
                 assert.equal(JSON.stringify(telemetry).includes('PrivateShortcode'), false);
                 assert.equal(JSON.stringify(telemetry).includes(upstreamUrl), false);
+            } finally {
+                globalThis.fetch = originalFetch;
+                console.warn = originalWarn;
+            }
+        },
+    },
+    {
+        name: 'Instagram Reel video relay rejects non-video upstream bodies',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const originalWarn = console.warn;
+            const upstreamUrl = 'https://kkinstagram.com/reel/HtmlInsteadOfVideo/';
+            const telemetry: Array<[string, Record<string, unknown>]> = [];
+            globalThis.fetch = async () => new Response('<html>not a video</html>', {
+                status: 200,
+                headers: { 'Content-Type': 'text/html; charset=utf-8' },
+            });
+            console.warn = (event, fields) => {
+                telemetry.push([String(event), fields as Record<string, unknown>]);
+            };
+
+            try {
+                const response = await app.request(
+                    '/video/instagram?url=' + encodeURIComponent(upstreamUrl),
+                    {},
+                    env,
+                );
+
+                assert.equal(response.status, 302);
+                assert.equal(response.headers.get('Location'), upstreamUrl);
+                assert.equal(telemetry[0]?.[0], 'instagram_video_relay');
+                assert.equal(telemetry[0]?.[1].upstreamMediaType, 'other');
+                assert.equal(telemetry[0]?.[1].failureStage, 'upstream_media_type');
+                assert.equal(JSON.stringify(telemetry).includes('HtmlInsteadOfVideo'), false);
             } finally {
                 globalThis.fetch = originalFetch;
                 console.warn = originalWarn;
@@ -4482,7 +4636,7 @@ const tests: TestCase[] = [
                     return new Response([
                         '<span class="UsernameText">jyoti_thakur157</span>',
                         `<div class="Caption">jyoti_thakur157<br /><br />${caption}</div>`,
-                        '<script>{"display_url":"https:\\/\\/scontent.example.com\\/hindi-reel.jpg"}</script>',
+                        '<script>{"video_url":"https:\\/\\/scontent.example.com\\/hindi-reel.mp4","display_url":"https:\\/\\/scontent.example.com\\/hindi-reel.jpg"}</script>',
                     ].join(''), { status: 200 });
                 }
                 return new Response('', { status: 404 });
@@ -4959,7 +5113,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v8']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v9']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

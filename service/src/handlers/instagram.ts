@@ -415,9 +415,19 @@ export const instagramHandler: PlatformHandler = {
                 ),
             ]);
             if (canonicalResult.success && canonicalResult.data) {
+                const embedDomain = env.EMBED_DOMAIN || 'fixembed.app';
+                const canonicalData = parsed.type === 'reel' && canonicalResult.data.video?.url
+                    ? {
+                        ...canonicalResult.data,
+                        video: {
+                            ...canonicalResult.data.video,
+                            url: `https://${embedDomain}/video/instagram?url=${encodeURIComponent(canonicalResult.data.video.url)}`,
+                        },
+                    }
+                    : canonicalResult.data;
                 const enrichedData = mergeCanonicalInstagramData(
                     nativeResult.data,
-                    canonicalResult.data,
+                    canonicalData,
                 );
                 nativeResult = {
                     ...nativeResult,
@@ -464,7 +474,12 @@ export const instagramHandler: PlatformHandler = {
                 };
             }
 
-            if (vxResult.success && vxResult.image && !vxResult.isVideo) {
+            if (
+                vxResult.success
+                && vxResult.image
+                && !vxResult.isVideo
+                && parsed.type !== 'reel'
+            ) {
                 // VxInstagram found an image (possibly composite carousel)
 
                 const metadata = nativeResult.data;
@@ -533,6 +548,7 @@ export const instagramHandler: PlatformHandler = {
             // and branded rendering.
             const kkMediaUrl = `https://kkinstagram.com/${parsed.type === 'reel' ? 'reel' : 'p'}/${parsed.shortcode}/`;
             let kkAvailable = false;
+            let kkContentType = '';
             try {
                 const kkResponse = await fetchWithTimeout(kkMediaUrl, {
                     headers: {
@@ -541,8 +557,11 @@ export const instagramHandler: PlatformHandler = {
                         'User-Agent': 'Discordbot/2.0',
                     },
                 }, remainingProviderTime(INSTAGRAM_KK_TIMEOUT_MS));
-                const contentType = kkResponse.headers.get('Content-Type') || '';
-                kkAvailable = kkResponse.ok && (contentType.startsWith('image/') || contentType.startsWith('video/'));
+                kkContentType = kkResponse.headers.get('Content-Type') || '';
+                kkAvailable = kkResponse.ok && (
+                    kkContentType.startsWith('image/')
+                    || kkContentType.startsWith('video/')
+                );
             } catch (error) {
                 console.warn('fallback_fetch_failed', {
                     platform: 'instagram',
@@ -551,7 +570,11 @@ export const instagramHandler: PlatformHandler = {
                 });
             }
 
-            if (kkAvailable && parsed.type === 'reel') {
+            if (
+                kkAvailable
+                && parsed.type === 'reel'
+                && kkContentType.startsWith('video/')
+            ) {
                 const embedDomain = env.EMBED_DOMAIN || 'fixembed.app';
                 return {
                     success: true,
@@ -573,7 +596,7 @@ export const instagramHandler: PlatformHandler = {
                 };
             }
 
-            if (kkAvailable) {
+            if (kkAvailable && parsed.type !== 'reel') {
                 return {
                     success: true,
                     source: 'fallback',
@@ -628,6 +651,9 @@ export const instagramHandler: PlatformHandler = {
             }
 
             const firstMedia = media[0];
+            if (parsed.type === 'reel' && firstMedia.type !== 'video') {
+                throw new Error('Recovered Instagram reel media was not a video');
+            }
 
             const result: HandlerResponse = {
                 success: true,
@@ -722,7 +748,10 @@ export const instagramHandler: PlatformHandler = {
                 errorType: error instanceof Error ? error.name : 'unknown',
             });
 
-            if (nativeResult?.success) {
+            if (
+                nativeResult?.success
+                && (parsed.type !== 'reel' || Boolean(nativeResult.data?.video))
+            ) {
                 return nativeResult;
             }
             return { success: false, error: 'Unable to recover Instagram media', redirect: canonicalUrl };
@@ -841,13 +870,88 @@ function extractInstagramCanonicalAvatar(
     return undefined;
 }
 
+function extractInstagramCanonicalVideo(html: string): string | undefined {
+    const patterns = [
+        /"video_url"\s*:\s*"((?:\\.|[^"\\])*)"/i,
+        /"contentUrl"\s*:\s*"((?:\\.|[^"\\])*)"/i,
+        /(https:\\\/\\\/[^"'\s<>]+?\.mp4[^"'\s<>]*)/i,
+        /(https:\/\/[^"'\s<>]+?\.mp4[^"'\s<>]*)/i,
+    ];
+    for (const pattern of patterns) {
+        const candidate = html.match(pattern)?.[1];
+        const trustedUrl = trustedInstagramMediaUrl(candidate || '');
+        if (!trustedUrl) continue;
+        try {
+            if (new URL(trustedUrl).pathname.toLowerCase().endsWith('.mp4')) {
+                return trustedUrl;
+            }
+        } catch {
+            // Invalid canonical media is ignored.
+        }
+    }
+    return undefined;
+}
+
+function extractInstagramJsonObjectContaining(
+    html: string,
+    markerIndex: number,
+): string | undefined {
+    const objectStarts: number[] = [];
+    let inString = false;
+    let escaped = false;
+    for (let index = 0; index < markerIndex; index += 1) {
+        const character = html[index];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === '"') inString = false;
+        } else if (character === '"') {
+            inString = true;
+        } else if (character === '{') {
+            objectStarts.push(index);
+        } else if (character === '}') {
+            objectStarts.pop();
+        }
+    }
+
+    const objectStart = objectStarts.at(-1);
+    if (objectStart === undefined) return undefined;
+
+    let depth = 0;
+    inString = false;
+    escaped = false;
+    for (let index = objectStart; index < html.length; index += 1) {
+        const character = html[index];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === '"') inString = false;
+            continue;
+        }
+        if (character === '"') {
+            inString = true;
+        } else if (character === '{') {
+            depth += 1;
+        } else if (character === '}') {
+            depth -= 1;
+            if (depth === 0) return html.slice(objectStart, index + 1);
+        }
+    }
+    return undefined;
+}
+
 function parseCanonicalInstagramMetadata(
     html: string,
     canonicalUrl: string,
     parsed: { type: string; shortcode: string },
 ): EmbedData | undefined {
-    const mediaMarker = `"code":"${parsed.shortcode}"`;
-    const mediaIndex = html.lastIndexOf(mediaMarker);
+    const escapedShortcode = parsed.shortcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const mediaMarker = new RegExp(`"code"\\s*:\\s*"${escapedShortcode}"`, 'g');
+    let mediaIndex = -1;
+    for (const match of html.matchAll(mediaMarker)) mediaIndex = match.index;
+    const mediaObjectHtml = mediaIndex >= 0
+        ? extractInstagramJsonObjectContaining(html, mediaIndex)
+        : undefined;
     const mediaHtml = mediaIndex >= 0
         ? html.slice(mediaIndex, mediaIndex + 256 * 1024)
         : html;
@@ -878,6 +982,9 @@ function parseCanonicalInstagramMetadata(
     const poster = trustedInstagramMediaUrl(
         extractInstagramMeta(html, 'property', 'og:image') || '',
     );
+    const videoUrl = parsed.type === 'reel' && mediaObjectHtml
+        ? extractInstagramCanonicalVideo(mediaObjectHtml)
+        : undefined;
     const authorName = titleIdentity?.[1]?.trim() || username;
     const authorAvatar = extractInstagramCanonicalAvatar(html, username);
     const timestamp = extractInstagramTimestamp(mediaHtml);
@@ -885,6 +992,7 @@ function parseCanonicalInstagramMetadata(
         username
         || caption
         || poster
+        || videoUrl
         || Number.isFinite(likes)
         || Number.isFinite(comments),
     );
@@ -905,6 +1013,14 @@ function parseCanonicalInstagramMetadata(
         authorUrl: username ? `https://www.instagram.com/${username}/` : undefined,
         authorAvatar,
         image: poster,
+        video: videoUrl
+            ? {
+                url: videoUrl,
+                width: 1080,
+                height: 1920,
+                thumbnail: poster,
+            }
+            : undefined,
         color: platformColors.instagram,
         platform: 'instagram',
         stats: formatStats({

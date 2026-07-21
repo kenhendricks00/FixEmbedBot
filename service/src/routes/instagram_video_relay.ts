@@ -81,6 +81,9 @@ export async function relayInstagramVideo(c: FixEmbedContext): Promise<Response>
 
     const requestId = crypto.randomUUID();
     const provider = classifyInstagramVideoProvider(videoUrl);
+    if (provider === 'other') {
+        return c.json({ error: 'Unsupported Instagram video provider' }, 400);
+    }
     const requestedRange = Boolean(c.req.header('Range'));
     const startedAt = Date.now();
 
@@ -96,6 +99,10 @@ export async function relayInstagramVideo(c: FixEmbedContext): Promise<Response>
         const upstreamMediaType = classifyUpstreamMediaType(
             response.headers.get('Content-Type'),
         );
+        const normalizedContentType = (response.headers.get('Content-Type') || '')
+            .split(';', 1)[0]
+            .trim()
+            .toLowerCase();
         const hasContentRange = response.headers.has('Content-Range');
         const contentLength = parseContentLength(
             response.headers.get('Content-Length'),
@@ -117,6 +124,25 @@ export async function relayInstagramVideo(c: FixEmbedContext): Promise<Response>
             return redirectToSource(videoUrl, requestId);
         }
 
+        const supportedMediaType = upstreamMediaType === 'video/mp4'
+            || upstreamMediaType === 'video/other'
+            || normalizedContentType === 'application/octet-stream';
+        if (!supportedMediaType) {
+            console.warn('instagram_video_relay', {
+                requestId,
+                provider,
+                outcome: 'redirected',
+                requestedRange,
+                upstreamStatus: response.status,
+                upstreamMediaType,
+                hasContentRange,
+                contentLength,
+                upstreamResponseMs,
+                failureStage: 'upstream_media_type',
+            });
+            return redirectToSource(videoUrl, requestId);
+        }
+
         console.info('instagram_video_relay', {
             requestId,
             provider,
@@ -130,7 +156,7 @@ export async function relayInstagramVideo(c: FixEmbedContext): Promise<Response>
         });
 
         const headers = new Headers();
-        headers.set('Content-Type', response.headers.get('Content-Type') || 'video/mp4');
+        headers.set('Content-Type', 'video/mp4');
         headers.set('Accept-Ranges', 'bytes');
         headers.set('Cache-Control', 'public, max-age=3600');
         headers.set('Content-Disposition', 'inline; filename="instagram-video.mp4"');
