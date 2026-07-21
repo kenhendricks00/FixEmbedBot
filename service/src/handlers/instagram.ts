@@ -24,6 +24,7 @@ const INSTAGRAM_CANONICAL_TIMEOUT_MS = 1200;
 const INSTAGRAM_VX_TIMEOUT_MS = 1200;
 const INSTAGRAM_KK_TIMEOUT_MS = 600;
 const INSTAGRAM_STATS_TIMEOUT_MS = 650;
+const INSTAGRAM_VIDEO_PROBE_TIMEOUT_MS = 650;
 const INSTAGRAM_MAX_CAROUSEL_ITEMS = 20;
 
 // ========== VxInstagram Scraper ==========
@@ -94,6 +95,32 @@ async function scrapeVxInstagram(shortcode: string, type: string, timeoutMs: num
             errorType: error instanceof Error ? error.name : 'unknown',
         });
         return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+}
+
+async function canRelayInstagramVideo(videoUrl: string, timeoutMs: number): Promise<boolean> {
+    const trustedVideoUrl = trustedInstagramMediaUrl(videoUrl);
+    if (!trustedVideoUrl) return false;
+    try {
+        const response = await fetchWithTimeout(trustedVideoUrl, {
+            headers: {
+                'User-Agent': 'TelegramBot (like TwitterBot)',
+                'Accept': 'video/*,*/*',
+                'Range': 'bytes=0-',
+            },
+        }, timeoutMs);
+        const contentType = (response.headers.get('Content-Type') || '')
+            .split(';', 1)[0]
+            .trim()
+            .toLowerCase();
+        const playable = (response.ok || response.status === 206) && (
+            contentType.startsWith('video/')
+            || contentType === 'application/octet-stream'
+        );
+        await response.body?.cancel();
+        return playable;
+    } catch {
+        return false;
     }
 }
 
@@ -373,6 +400,18 @@ export const instagramHandler: PlatformHandler = {
         let nativeResult: HandlerResponse | undefined;
         try {
             const remainingProviderTime = createTimeoutBudget(INSTAGRAM_TOTAL_TIMEOUT_MS);
+            const embedDomain = env.EMBED_DOMAIN || 'fixembed.app';
+            const videoRelayability = new Map<string, boolean>();
+            const probeVideoRelayability = async (videoUrl: string): Promise<boolean> => {
+                const cached = videoRelayability.get(videoUrl);
+                if (cached !== undefined) return cached;
+                const playable = await canRelayInstagramVideo(
+                    videoUrl,
+                    remainingProviderTime(INSTAGRAM_VIDEO_PROBE_TIMEOUT_MS),
+                );
+                videoRelayability.set(videoUrl, playable);
+                return playable;
+            };
             const shortcodeTimestamp = deriveMetaShortcodeTimestamp(parsed.shortcode);
             // First-party FixEmbed path: use Instagram's own embed document and
             // render its metadata ourselves before consulting embed services.
@@ -383,6 +422,19 @@ export const instagramHandler: PlatformHandler = {
             );
             if (nativeResult.data && !nativeResult.data.timestamp) {
                 nativeResult.data.timestamp = shortcodeTimestamp;
+            }
+            if (parsed.type === 'reel' && nativeResult.data?.video?.url) {
+                const nativeVideoUrl = nativeResult.data.video.url;
+                const nativeVideoIsPlayable = await probeVideoRelayability(nativeVideoUrl);
+                nativeResult.data = {
+                    ...nativeResult.data,
+                    video: nativeVideoIsPlayable
+                        ? {
+                            ...nativeResult.data.video,
+                            url: `https://${embedDomain}/video/instagram?url=${encodeURIComponent(nativeVideoUrl)}`,
+                        }
+                        : undefined,
+                };
             }
             let nativeHasRequiredMedia = parsed.type === 'reel'
                 ? Boolean(nativeResult.data?.video)
@@ -415,16 +467,24 @@ export const instagramHandler: PlatformHandler = {
                 ),
             ]);
             if (canonicalResult.success && canonicalResult.data) {
-                const embedDomain = env.EMBED_DOMAIN || 'fixembed.app';
-                const canonicalData = parsed.type === 'reel' && canonicalResult.data.video?.url
+                const canonicalVideoUrl = parsed.type === 'reel'
+                    ? canonicalResult.data.video?.url
+                    : undefined;
+                const canonicalVideoIsPlayable = canonicalVideoUrl
+                    ? await probeVideoRelayability(canonicalVideoUrl)
+                    : false;
+                const canonicalData = canonicalVideoUrl && canonicalVideoIsPlayable
                     ? {
                         ...canonicalResult.data,
                         video: {
-                            ...canonicalResult.data.video,
-                            url: `https://${embedDomain}/video/instagram?url=${encodeURIComponent(canonicalResult.data.video.url)}`,
+                            ...canonicalResult.data.video!,
+                            url: `https://${embedDomain}/video/instagram?url=${encodeURIComponent(canonicalVideoUrl)}`,
                         },
                     }
-                    : canonicalResult.data;
+                    : {
+                        ...canonicalResult.data,
+                        video: undefined,
+                    };
                 const enrichedData = mergeCanonicalInstagramData(
                     nativeResult.data,
                     canonicalData,

@@ -1904,10 +1904,16 @@ const tests: TestCase[] = [
                         '<span class="UsernameText">creator</span>',
                         `<div class="Caption">creator<br /><br />${fullCaption}View all 133 comments</div>`,
                         '<script>',
-                        'window.__data={"username":"creator","video_url":"https://scontent.example/reel.mp4",',
+                        'window.__data={"username":"creator","video_url":"https://scontent.example.cdninstagram.com/reel.mp4",',
                         '"thumbnail_src":"https://scontent.example/reel.jpg","comment_count":12};',
                         '</script>',
                     ].join(''), { status: 200 });
+                }
+                if (url === 'https://scontent.example.cdninstagram.com/reel.mp4') {
+                    return new Response('video-chunk', {
+                        status: 206,
+                        headers: { 'Content-Type': 'video/mp4' },
+                    });
                 }
                 return new Response('', { status: 404 });
             };
@@ -1918,7 +1924,10 @@ const tests: TestCase[] = [
                     env,
                 );
                 assert.equal(response.success, true);
-                assert.equal(response.data?.video?.url, 'https://scontent.example/reel.mp4');
+                assert.equal(
+                    response.data?.video?.url,
+                    'https://fixembed.app/video/instagram?url=https%3A%2F%2Fscontent.example.cdninstagram.com%2Freel.mp4',
+                );
                 assert.equal(response.data?.video?.thumbnail, 'https://scontent.example/reel.jpg');
                 assert.equal(response.data?.image, 'https://scontent.example/reel.jpg');
                 assert.equal(response.data?.authorName, 'creator');
@@ -1958,6 +1967,12 @@ const tests: TestCase[] = [
                 }
                 if (url.includes('vxinstagram.com/reel/Da-viZXsdih')) {
                     return new Response('', { status: 404 });
+                }
+                if (url === 'https://scontent.example.cdninstagram.com/reel.mp4?x=1&y=2') {
+                    return new Response('video-chunk', {
+                        status: 206,
+                        headers: { 'Content-Type': 'video/mp4' },
+                    });
                 }
                 if (url.includes('kkinstagram.com/reel/Da-viZXsdih')) {
                     return new Response('', { status: 404 });
@@ -2013,7 +2028,7 @@ const tests: TestCase[] = [
                 if (url.includes('/p/PosterOnlyReel/embed/captioned/')) {
                     return new Response([
                         '<span class="UsernameText">creator</span>',
-                        '<script>{"display_url":"https:\\/\\/scontent.example.cdninstagram.com\\/poster.jpg"}</script>',
+                        '<script>{"video_url":"https:\\/\\/internal.example\\/private.mp4","display_url":"https:\\/\\/scontent.example.cdninstagram.com\\/poster.jpg"}</script>',
                     ].join(''), { status: 200 });
                 }
                 if (url === sourceUrl) {
@@ -2049,6 +2064,70 @@ const tests: TestCase[] = [
                     requested.some((request) => request.includes('snapsave.app')),
                     true,
                 );
+                assert.equal(requested.includes('https://internal.example/private.mp4'), false);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
+        name: 'instagramHandler skips canonical reel video that the Worker cannot relay',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const requested: string[] = [];
+            const sourceUrl = 'https://www.instagram.com/reel/BlockedCanonicalVideo/';
+            const canonicalVideo = 'https://scontent.example.cdninstagram.com/blocked-reel.mp4?token=private';
+            globalThis.fetch = async (input, init) => {
+                const url = String(input);
+                requested.push(url);
+                if (url.includes('/p/BlockedCanonicalVideo/embed/captioned/')) {
+                    return new Response([
+                        '<span class="UsernameText">creator</span>',
+                        '<script>{"video_url":"https:\\/\\/scontent.example.cdninstagram.com\\/blocked-reel.mp4?token=private","display_url":"https:\\/\\/scontent.example.cdninstagram.com\\/poster.jpg"}</script>',
+                    ].join(''), { status: 200 });
+                }
+                if (url === sourceUrl) {
+                    return new Response([
+                        '<meta property="og:image" content="https://scontent.example.cdninstagram.com/poster.jpg" />',
+                        '<script>{"code":"BlockedCanonicalVideo","contentUrl":"https:\\/\\/scontent.example.cdninstagram.com\\/blocked-reel.mp4?token=private"}</script>',
+                    ].join(''), { status: 200 });
+                }
+                if (url === canonicalVideo) {
+                    const headers = new Headers(init?.headers);
+                    assert.equal(headers.get('User-Agent'), 'TelegramBot (like TwitterBot)');
+                    assert.equal(headers.get('Accept'), 'video/*,*/*');
+                    assert.equal(headers.get('Range'), 'bytes=0-');
+                    return new Response('forbidden', { status: 403 });
+                }
+                if (url.includes('vxinstagram.com/reel/BlockedCanonicalVideo')) {
+                    return new Response('', { status: 404 });
+                }
+                if (url.includes('kkinstagram.com/reel/BlockedCanonicalVideo')) {
+                    return new Response('video-chunk', {
+                        status: 206,
+                        headers: { 'Content-Type': 'video/mp4' },
+                    });
+                }
+                if (url.includes('snapsave.app')) {
+                    return new Response('', { status: 503 });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await instagramHandler.handle(sourceUrl, env);
+
+                assert.equal(response.success, true);
+                assert.equal(response.source, 'fallback');
+                assert.equal(
+                    response.data?.video?.url,
+                    'https://fixembed.app/video/instagram?url=https%3A%2F%2Fkkinstagram.com%2Freel%2FBlockedCanonicalVideo%2F',
+                );
+                assert.equal(requested.includes(canonicalVideo), true);
+                assert.equal(
+                    requested.some((request) => request.includes('snapsave.app')),
+                    false,
+                );
             } finally {
                 globalThis.fetch = originalFetch;
             }
@@ -2064,9 +2143,15 @@ const tests: TestCase[] = [
                     return new Response([
                         '<span class="UsernameText">creator</span>',
                         '<div class="Caption">creator<br /><br />A reel caption</div>',
-                        '<video src="https://scontent.example/reel.mp4"></video>',
+                        '<video src="https://scontent.example.cdninstagram.com/reel.mp4"></video>',
                         String.raw`<script>window.__data={\"music_metadata\":{\"profile_pic_url\":\"https:\\\/\\\/scontent.example.cdninstagram.com\\\/wrong-avatar.jpg\"},\"owner\":{\"id\":\"1\",\"username\":\"creator\",\"is_verified\":false,\"profile_pic_url\":\"https:\\\/\\\/scontent.example.cdninstagram.com\\\/owner-avatar.jpg?stp=dst-jpg_s100x100_tt6\u0026s=signed\",\"friendship_status\":{\"following\":false}}}</script>`,
                     ].join(''), { status: 200 });
+                }
+                if (url === 'https://scontent.example.cdninstagram.com/reel.mp4') {
+                    return new Response('video-chunk', {
+                        status: 206,
+                        headers: { 'Content-Type': 'video/mp4' },
+                    });
                 }
                 return new Response('', { status: 404 });
             };
@@ -4636,8 +4721,14 @@ const tests: TestCase[] = [
                     return new Response([
                         '<span class="UsernameText">jyoti_thakur157</span>',
                         `<div class="Caption">jyoti_thakur157<br /><br />${caption}</div>`,
-                        '<script>{"video_url":"https:\\/\\/scontent.example.com\\/hindi-reel.mp4","display_url":"https:\\/\\/scontent.example.com\\/hindi-reel.jpg"}</script>',
+                        '<script>{"video_url":"https:\\/\\/scontent.example.cdninstagram.com\\/hindi-reel.mp4","display_url":"https:\\/\\/scontent.example.cdninstagram.com\\/hindi-reel.jpg"}</script>',
                     ].join(''), { status: 200 });
+                }
+                if (url === 'https://scontent.example.cdninstagram.com/hindi-reel.mp4') {
+                    return new Response('video-chunk', {
+                        status: 206,
+                        headers: { 'Content-Type': 'video/mp4' },
+                    });
                 }
                 return new Response('', { status: 404 });
             };
@@ -5113,7 +5204,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v9']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v10']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'
@@ -5450,7 +5541,7 @@ const tests: TestCase[] = [
                 stats: '💬 12',
                 image: 'https://scontent.example/reel.jpg',
                 video: {
-                    url: 'https://scontent.example/reel.mp4',
+                    url: 'https://scontent.example.cdninstagram.com/reel.mp4',
                     thumbnail: 'https://scontent.example/reel.jpg',
                     width: 720,
                     height: 1280,
@@ -5468,9 +5559,15 @@ const tests: TestCase[] = [
                         '<a class="Avatar"><img src="https://scontent.example/avatar.jpg" alt="creator" /></a>',
                         '<span class="UsernameText">creator</span>',
                         '<div class="Caption">creator<br /><br />Actual reel caption</div>',
-                        '<script>window.__data={"username":"creator","video_url":"https://scontent.example/reel.mp4",',
+                        '<script>window.__data={"username":"creator","video_url":"https://scontent.example.cdninstagram.com/reel.mp4",',
                         '"thumbnail_src":"https://scontent.example/reel.jpg","comment_count":12};</script>',
                     ].join(''), { status: 200 });
+                }
+                if (url === 'https://scontent.example.cdninstagram.com/reel.mp4') {
+                    return new Response('video-chunk', {
+                        status: 206,
+                        headers: { 'Content-Type': 'video/mp4' },
+                    });
                 }
                 return new Response('', { status: 404 });
             };
