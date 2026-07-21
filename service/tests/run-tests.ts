@@ -1892,12 +1892,14 @@ const tests: TestCase[] = [
         },
     },
     {
-        name: 'instagramHandler keeps the native reel poster with its video',
+        name: 'instagramHandler keeps the native reel poster with a fallback video',
         run: async () => {
             const originalFetch = globalThis.fetch;
+            const requested: string[] = [];
             const fullCaption = 'Actual reel caption @cota_official with the complete event details, context, and creator notes that must survive beyond the compact title. #f1 #formula1 #motorsports #usgp';
             globalThis.fetch = async (input) => {
                 const url = String(input);
+                requested.push(url);
                 if (url.includes('instagram.com/p/PreviewReel/embed/captioned')) {
                     return new Response([
                         '<a class="Avatar"><img src="https://scontent.example/avatar.jpg?x=1&amp;y=2" alt="creator" /></a>',
@@ -1909,11 +1911,11 @@ const tests: TestCase[] = [
                         '</script>',
                     ].join(''), { status: 200 });
                 }
-                if (url === 'https://scontent.example.cdninstagram.com/reel.mp4') {
-                    return new Response('video-chunk', {
-                        status: 206,
-                        headers: { 'Content-Type': 'video/mp4' },
-                    });
+                if (url.includes('vxinstagram.com/reel/PreviewReel')) {
+                    return new Response(
+                        '<meta property="og:video" content="https://vxinstagram.com/offload/PreviewReel/0.mp4">',
+                        { status: 200 },
+                    );
                 }
                 return new Response('', { status: 404 });
             };
@@ -1924,9 +1926,10 @@ const tests: TestCase[] = [
                     env,
                 );
                 assert.equal(response.success, true);
+                assert.equal(response.source, 'fallback');
                 assert.equal(
                     response.data?.video?.url,
-                    'https://fixembed.app/video/instagram?url=https%3A%2F%2Fscontent.example.cdninstagram.com%2Freel.mp4',
+                    'https://fixembed.app/video/instagram?url=https%3A%2F%2Fvxinstagram.com%2Foffload%2FPreviewReel%2F0.mp4',
                 );
                 assert.equal(response.data?.video?.thumbnail, 'https://scontent.example/reel.jpg');
                 assert.equal(response.data?.image, 'https://scontent.example/reel.jpg');
@@ -1938,6 +1941,10 @@ const tests: TestCase[] = [
                 assert.match(response.data?.title || '', /\.\.\.$/);
                 assert.equal(response.data?.caption, fullCaption);
                 assert.doesNotMatch(response.data?.title || '', /^creator\b/i);
+                assert.equal(
+                    requested.includes('https://scontent.example.cdninstagram.com/reel.mp4'),
+                    false,
+                );
             } finally {
                 globalThis.fetch = originalFetch;
             }
@@ -1966,13 +1973,10 @@ const tests: TestCase[] = [
                     ].join(''), { status: 200 });
                 }
                 if (url.includes('vxinstagram.com/reel/Da-viZXsdih')) {
-                    return new Response('', { status: 404 });
-                }
-                if (url === 'https://scontent.example.cdninstagram.com/reel.mp4?x=1&y=2') {
-                    return new Response('video-chunk', {
-                        status: 206,
-                        headers: { 'Content-Type': 'video/mp4' },
-                    });
+                    return new Response(
+                        '<meta property="og:video" content="https://vxinstagram.com/offload/Da-viZXsdih/0.mp4">',
+                        { status: 200 },
+                    );
                 }
                 if (url.includes('kkinstagram.com/reel/Da-viZXsdih')) {
                     return new Response('', { status: 404 });
@@ -1987,11 +1991,15 @@ const tests: TestCase[] = [
                 const response = await instagramHandler.handle(sourceUrl, env);
 
                 assert.equal(response.success, true);
-                assert.equal(response.source, 'first-party');
+                assert.equal(response.source, 'fallback');
                 assert.equal(response.data?.image, 'https://scontent.example.cdninstagram.com/poster.jpg');
                 assert.equal(
                     response.data?.video?.url,
-                    'https://fixembed.app/video/instagram?url=https%3A%2F%2Fscontent.example.cdninstagram.com%2Freel.mp4%3Fx%3D1%26y%3D2',
+                    'https://fixembed.app/video/instagram?url=https%3A%2F%2Fvxinstagram.com%2Foffload%2FDa-viZXsdih%2F0.mp4',
+                );
+                assert.equal(
+                    requested.includes('https://scontent.example.cdninstagram.com/reel.mp4?x=1&y=2'),
+                    false,
                 );
                 assert.equal(
                     requested.some((request) => request.includes('snapsave.app')),
@@ -2071,13 +2079,13 @@ const tests: TestCase[] = [
         },
     },
     {
-        name: 'instagramHandler skips canonical reel video that the Worker cannot relay',
+        name: 'instagramHandler never probes canonical Instagram CDN video',
         run: async () => {
             const originalFetch = globalThis.fetch;
             const requested: string[] = [];
             const sourceUrl = 'https://www.instagram.com/reel/BlockedCanonicalVideo/';
             const canonicalVideo = 'https://scontent.example.cdninstagram.com/blocked-reel.mp4?token=private';
-            globalThis.fetch = async (input, init) => {
+            globalThis.fetch = async (input) => {
                 const url = String(input);
                 requested.push(url);
                 if (url.includes('/p/BlockedCanonicalVideo/embed/captioned/')) {
@@ -2093,11 +2101,7 @@ const tests: TestCase[] = [
                     ].join(''), { status: 200 });
                 }
                 if (url === canonicalVideo) {
-                    const headers = new Headers(init?.headers);
-                    assert.equal(headers.get('User-Agent'), 'TelegramBot (like TwitterBot)');
-                    assert.equal(headers.get('Accept'), 'video/*,*/*');
-                    assert.equal(headers.get('Range'), 'bytes=0-');
-                    return new Response('forbidden', { status: 403 });
+                    throw new Error('Canonical Instagram CDN video must not be probed');
                 }
                 if (url.includes('vxinstagram.com/reel/BlockedCanonicalVideo')) {
                     return new Response('', { status: 404 });
@@ -2123,7 +2127,7 @@ const tests: TestCase[] = [
                     response.data?.video?.url,
                     'https://fixembed.app/video/instagram?url=https%3A%2F%2Fkkinstagram.com%2Freel%2FBlockedCanonicalVideo%2F',
                 );
-                assert.equal(requested.includes(canonicalVideo), true);
+                assert.equal(requested.includes(canonicalVideo), false);
                 assert.equal(
                     requested.some((request) => request.includes('snapsave.app')),
                     false,
@@ -2152,6 +2156,12 @@ const tests: TestCase[] = [
                         status: 206,
                         headers: { 'Content-Type': 'video/mp4' },
                     });
+                }
+                if (url.includes('vxinstagram.com/reel/OwnerAvatarReel')) {
+                    return new Response(
+                        '<meta property="og:video" content="https://vxinstagram.com/offload/OwnerAvatarReel/0.mp4">',
+                        { status: 200 },
+                    );
                 }
                 return new Response('', { status: 404 });
             };
@@ -4730,6 +4740,12 @@ const tests: TestCase[] = [
                         headers: { 'Content-Type': 'video/mp4' },
                     });
                 }
+                if (url.includes('vxinstagram.com/reel/HindiCaption')) {
+                    return new Response(
+                        '<meta property="og:video" content="https://vxinstagram.com/offload/HindiCaption/0.mp4">',
+                        { status: 200 },
+                    );
+                }
                 return new Response('', { status: 404 });
             };
             const translationEnv: Env = {
@@ -5204,7 +5220,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v10']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v11']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'
@@ -5568,6 +5584,12 @@ const tests: TestCase[] = [
                         status: 206,
                         headers: { 'Content-Type': 'video/mp4' },
                     });
+                }
+                if (url.includes('vxinstagram.com/reel/PreviewReel')) {
+                    return new Response(
+                        '<meta property="og:video" content="https://vxinstagram.com/offload/PreviewReel/0.mp4">',
+                        { status: 200 },
+                    );
                 }
                 return new Response('', { status: 404 });
             };
