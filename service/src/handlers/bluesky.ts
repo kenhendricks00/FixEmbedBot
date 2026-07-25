@@ -36,6 +36,13 @@ interface BlueskyPost {
             };
             embed?: {
                 $type: string;
+                cid?: string;
+                playlist?: string;
+                thumbnail?: string;
+                aspectRatio?: {
+                    width?: number;
+                    height?: number;
+                };
                 images?: Array<{
                     alt: string;
                     fullsize: string;
@@ -124,6 +131,17 @@ export const blueskyHandler: PlatformHandler = {
                 image = post.embed.external.thumb;
             }
 
+            const videoView = post.embed?.$type === 'app.bsky.embed.video#view'
+                ? post.embed
+                : undefined;
+            const videoCid = videoView?.cid?.trim();
+            const video = videoCid ? {
+                url: `https://bsky.social/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(author.did)}&cid=${encodeURIComponent(videoCid)}`,
+                width: positiveDimension(videoView?.aspectRatio?.width, 1280),
+                height: positiveDimension(videoView?.aspectRatio?.height, 720),
+                thumbnail: videoView?.thumbnail,
+            } : undefined;
+
             return {
                 success: true,
                 source: 'first-party',
@@ -138,6 +156,7 @@ export const blueskyHandler: PlatformHandler = {
                     authorAvatar: author.avatar,
                     image,
                     images,
+                    video,
                     color: platformColors.bluesky,
                     platform: 'bluesky',
                     timestamp: record.createdAt,
@@ -154,3 +173,9 @@ export const blueskyHandler: PlatformHandler = {
         }
     },
 };
+
+function positiveDimension(value: number | undefined, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.round(value)
+        : fallback;
+}

@@ -74,8 +74,10 @@ def build_bluesky_layout(
     else:
         children.append(discord.ui.TextDisplay(header_text))
 
+    video = payload.get("video")
+    video_url = str(video.get("url") or "").strip() if isinstance(video, Mapping) else ""
     image_urls = payload.get("images") if isinstance(payload.get("images"), list) else []
-    media_urls = [str(url) for url in image_urls if url]
+    media_urls = [video_url] if video_url else [str(url) for url in image_urls if url]
     fallback_image = str(payload.get("image") or "").strip()
     if not media_urls and fallback_image:
         media_urls = [fallback_image]

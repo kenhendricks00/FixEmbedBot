@@ -48,6 +48,31 @@ class BlueskyEmbedTests(unittest.TestCase):
         self.assertNotIn("FixEmbed link", footer["content"])
         self.assertIn("<t:1783969200:R>", footer["content"])
 
+    def test_components_v2_layout_preserves_playable_video(self):
+        payload = {
+            "description": "A Bluesky post with a video.",
+            "url": "https://bsky.app/profile/creator.bsky.social/post/abc123",
+            "authorName": "Creator Name",
+            "authorHandle": "@creator.bsky.social",
+            "video": {
+                "url": (
+                    "https://bsky.social/xrpc/com.atproto.sync.getBlob"
+                    "?did=did%3Aplc%3Acreator&cid=bafkreivideo"
+                ),
+                "thumbnail": "https://video.bsky.app/watch/creator/video/thumbnail.jpg",
+                "width": 480,
+                "height": 270,
+            },
+        }
+
+        container = build_bluesky_layout(payload).to_components()[0]
+        gallery = container["components"][1]
+
+        self.assertEqual(
+            [item["media"]["url"] for item in gallery["items"]],
+            [payload["video"]["url"]],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

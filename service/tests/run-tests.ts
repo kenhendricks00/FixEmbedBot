@@ -3813,6 +3813,64 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'blueskyHandler preserves playable video metadata',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                if (url.includes('resolveHandle')) {
+                    return Response.json({ did: 'did:plc:jofm2b46bneeciyg6gnvmxut' });
+                }
+                if (url.includes('getPostThread')) {
+                    return Response.json({
+                        thread: {
+                            post: {
+                                author: {
+                                    did: 'did:plc:jofm2b46bneeciyg6gnvmxut',
+                                    handle: 'mysteriousz.bsky.social',
+                                    displayName: 'Mysterious Z',
+                                    avatar: 'https://cdn.bsky.app/avatar.jpg',
+                                },
+                                record: {
+                                    text: 'Friend showed me what Tokon boots up like on PC.',
+                                    createdAt: '2026-07-25T15:02:24.579Z',
+                                },
+                                embed: {
+                                    $type: 'app.bsky.embed.video#view',
+                                    cid: 'bafkreivideo',
+                                    playlist: 'https://video.bsky.app/watch/did%3Aplc%3Ajofm2b46bneeciyg6gnvmxut/bafkreivideo/playlist.m3u8',
+                                    thumbnail: 'https://video.bsky.app/watch/did%3Aplc%3Ajofm2b46bneeciyg6gnvmxut/bafkreivideo/thumbnail.jpg',
+                                    aspectRatio: { width: 480, height: 270 },
+                                },
+                                likeCount: 531,
+                                repostCount: 217,
+                                replyCount: 11,
+                            },
+                        },
+                    });
+                }
+                throw new Error('Unexpected request: ' + url);
+            };
+
+            try {
+                const response = await blueskyHandler.handle(
+                    'https://bsky.app/profile/mysteriousz.bsky.social/post/3mri55fykvc26',
+                    env,
+                );
+
+                assert.equal(response.success, true);
+                assert.deepEqual(response.data?.video, {
+                    url: 'https://bsky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Ajofm2b46bneeciyg6gnvmxut&cid=bafkreivideo',
+                    thumbnail: 'https://video.bsky.app/watch/did%3Aplc%3Ajofm2b46bneeciyg6gnvmxut/bafkreivideo/thumbnail.jpg',
+                    width: 480,
+                    height: 270,
+                });
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'redditHandler upgrades low-resolution subreddit icons from community metadata',
         run: async () => {
             const originalFetch = globalThis.fetch;
@@ -5220,7 +5278,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v11']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v12']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'
