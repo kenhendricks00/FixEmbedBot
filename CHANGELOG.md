@@ -2,6 +2,7 @@
 
 #### **Threads share links**
 - Restored automatic conversion for current `threads.com/share/...` links by resolving them to canonical Threads posts before rendering.
+- Preserved signed Threads profile-picture URLs so Discord can retrieve creator avatars reliably.
 - Rejected malformed share URLs and redirects outside Threads before any post metadata is fetched.
 
 #### **Content visibility controls**

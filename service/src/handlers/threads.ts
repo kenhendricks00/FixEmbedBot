@@ -36,17 +36,9 @@ function isThreadsAvatarUrl(value: string): boolean {
     }
 }
 
-function upgradeThreadsAvatarUrl(value: string): string | undefined {
+function trustedThreadsAvatarUrl(value: string): string | undefined {
     const decoded = decodeThreadsHtml(value);
-    if (!isThreadsAvatarUrl(decoded)) return undefined;
-
-    // GraphQL commonly returns a 150px avatar even though the same signed CDN
-    // URL supports a larger rendition. Reusing that URL avoids downloading an
-    // entire Threads profile page solely to discover the 640px variant.
-    const upgraded = decoded
-        .replace(/([?&]stp=[^&#]*?)s\d{2,4}x\d{2,4}/i, '$1s640x640')
-        .replace(/\/s\d{2,4}x\d{2,4}\//i, '/s640x640/');
-    return isThreadsAvatarUrl(upgraded) ? upgraded : undefined;
+    return isThreadsAvatarUrl(decoded) ? decoded : undefined;
 }
 
 async function fetchThreadsProfilePic(
@@ -54,7 +46,7 @@ async function fetchThreadsProfilePic(
     fallback = '',
     timeoutMs = THREADS_PROFILE_TIMEOUT_MS,
 ): Promise<string | undefined> {
-    const fallbackPic = upgradeThreadsAvatarUrl(fallback);
+    const fallbackPic = trustedThreadsAvatarUrl(fallback);
     if (fallbackPic) return fallbackPic;
     try {
         const profileUrl = `https://www.threads.net/@${encodeURIComponent(username)}`;
@@ -71,7 +63,7 @@ async function fetchThreadsProfilePic(
         ) || html.match(
             /<meta\b[^>]*\bcontent=["']([^"']+)["'][^>]*\bproperty=["']og:image["'][^>]*>/i,
         );
-        return upgradeThreadsAvatarUrl(match?.[1] || '');
+        return trustedThreadsAvatarUrl(match?.[1] || '');
     } catch {
         return fallbackPic;
     }

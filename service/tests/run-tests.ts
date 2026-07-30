@@ -199,7 +199,7 @@ const tests: TestCase[] = [
                 assert.equal(response.data?.timestamp, '2026-07-13T19:00:00.000Z');
                 assert.equal(
                     response.data?.authorAvatar,
-                    'https://scontent.example.cdninstagram.com/avatar.jpg?stp=dst-jpg_s640x640_tt6&s=signed',
+                    'https://scontent.example.cdninstagram.com/avatar.jpg?stp=dst-jpg_s150x150_tt6&s=signed',
                 );
             } finally {
                 globalThis.fetch = originalFetch;
@@ -284,7 +284,7 @@ const tests: TestCase[] = [
         },
     },
     {
-        name: 'threadsHandler upgrades a trusted GraphQL avatar without fetching the profile page',
+        name: 'threadsHandler preserves a trusted signed GraphQL avatar without fetching the profile page',
         run: async () => {
             const originalFetch = globalThis.fetch;
             const requested: string[] = [];
@@ -299,7 +299,7 @@ const tests: TestCase[] = [
                             code: 'DDKltrOTjJl',
                             user: {
                                 username: 'threads',
-                                profile_pic_url: 'https://scontent.example.cdninstagram.com/avatar.jpg?stp=dst-jpg_s150x150_tt6&ccb=1-7',
+                                profile_pic_url: 'https://scontent.example.cdninstagram.com/avatar.jpg?stp=dst-jpg_s150x150_tt6&ccb=1-7&oh=signed',
                             },
                             caption: { text: 'A current public Threads post.' },
                         } }] } }] } },
@@ -318,7 +318,7 @@ const tests: TestCase[] = [
                 assert.equal(graphqlSignal instanceof AbortSignal, true);
                 assert.equal(
                     response.data?.authorAvatar,
-                    'https://scontent.example.cdninstagram.com/avatar.jpg?stp=dst-jpg_s640x640_tt6&ccb=1-7',
+                    'https://scontent.example.cdninstagram.com/avatar.jpg?stp=dst-jpg_s150x150_tt6&ccb=1-7&oh=signed',
                 );
             } finally { globalThis.fetch = originalFetch; }
         },
@@ -5355,7 +5355,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v12']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v13']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'
