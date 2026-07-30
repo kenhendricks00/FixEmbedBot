@@ -104,6 +104,18 @@ class SocialServiceTests(unittest.TestCase):
             "https://www.instagram.com/share/reel/BAAAAExample/",
         )
 
+    def test_threads_share_url_is_forwarded_to_first_party_resolver(self):
+        url = "https://www.threads.com/share/_v5BysoKj/?xmt=tracking"
+
+        links = extract_supported_links(url)
+
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0].service, "Threads")
+        self.assertEqual(
+            links[0].canonical_url,
+            "https://www.threads.com/share/_v5BysoKj/",
+        )
+
     def test_youtube_community_post_is_supported(self):
         url = "https://www.youtube.com/post/UgkxExample123?si=tracking"
 

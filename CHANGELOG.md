@@ -1,5 +1,9 @@
 ## Unreleased
 
+#### **Threads share links**
+- Restored automatic conversion for current `threads.com/share/...` links by resolving them to canonical Threads posts before rendering.
+- Rejected malformed share URLs and redirects outside Threads before any post metadata is fetched.
+
 #### **Content visibility controls**
 - Added independent server-wide **Show NSFW** and **Show Spoilers** controls for rich cards.
 - Added per-channel overrides that can inherit, show, or hide each content type independently.

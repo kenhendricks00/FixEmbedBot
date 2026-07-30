@@ -132,6 +132,19 @@ def _canonicalize(url: str) -> Optional[tuple[str, str, str]]:
         username, post_id = segments[0][1:], segments[2]
         return "Threads", f"https://www.threads.net/@{username}/post/{post_id}", f"Threads • @{username}"
 
+    if (
+        host in {"threads.net", "threads.com"}
+        and len(segments) == 2
+        and segments[0].lower() == "share"
+        and re.fullmatch(r"[A-Za-z0-9_-]+", segments[1])
+    ):
+        share_token = segments[1]
+        return (
+            "Threads",
+            f"https://www.threads.com/share/{share_token}/",
+            f"Threads • {share_token}",
+        )
+
     if host in {"bsky.app", "bskyx.app"} and len(segments) >= 4 and segments[0].lower() == "profile" and segments[2].lower() == "post":
         handle, post_id = segments[1], segments[3]
         return "Bluesky", f"https://bsky.app/profile/{handle}/post/{post_id}", f"Bluesky • {handle}"

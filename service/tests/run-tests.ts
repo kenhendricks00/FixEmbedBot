@@ -207,6 +207,83 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'threadsHandler resolves share URLs through Threads before rendering',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const shareUrl = 'https://www.threads.com/share/_v5BysoKj/';
+            const canonicalUrl = 'https://www.threads.com/@strqwberrypannacotta/post/DbYQjA_FJhN?xmt=tracking';
+            const requested: string[] = [];
+            globalThis.fetch = async (input) => {
+                const requestUrl = String(input);
+                requested.push(requestUrl);
+                if (requestUrl === shareUrl) {
+                    return new Response(null, {
+                        status: 302,
+                        headers: { Location: canonicalUrl },
+                    });
+                }
+                if (requestUrl === 'https://www.threads.net/api/graphql') {
+                    return Response.json({
+                        data: { data: { edges: [{ node: { thread_items: [{ post: {
+                            code: 'DbYQjA_FJhN',
+                            user: {
+                                username: 'strqwberrypannacotta',
+                                profile_pic_url: 'https://scontent.example.cdninstagram.com/avatar.jpg?stp=dst-jpg_s150x150_tt6&s=signed',
+                            },
+                            caption: { text: 'Resolved Threads share post.' },
+                            like_count: 328,
+                            text_post_app_info: { direct_reply_count: 28 },
+                        } }] } }] } },
+                    });
+                }
+                throw new Error(`Unexpected fetch: ${requestUrl}`);
+            };
+
+            try {
+                assert.equal(findHandler(shareUrl), threadsHandler);
+                const response = await threadsHandler.handle(shareUrl, env);
+
+                assert.equal(response.success, true);
+                assert.equal(response.data?.caption, 'Resolved Threads share post.');
+                assert.equal(
+                    response.data?.url,
+                    'https://www.threads.net/@strqwberrypannacotta/post/DbYQjA_FJhN',
+                );
+                assert.deepEqual(requested, [
+                    shareUrl,
+                    'https://www.threads.net/api/graphql',
+                ]);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
+        name: 'threadsHandler rejects share redirects outside Threads',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const shareUrl = 'https://www.threads.com/share/_v5BysoKj/';
+            const requested: string[] = [];
+            globalThis.fetch = async (input) => {
+                requested.push(String(input));
+                return new Response(null, {
+                    status: 302,
+                    headers: { Location: 'https://attacker.example/post/DbYQjA_FJhN' },
+                });
+            };
+
+            try {
+                const response = await threadsHandler.handle(shareUrl, env);
+
+                assert.equal(response.success, false);
+                assert.equal(response.error, 'Invalid Threads share redirect');
+                assert.deepEqual(requested, [shareUrl]);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'threadsHandler upgrades a trusted GraphQL avatar without fetching the profile page',
         run: async () => {
             const originalFetch = globalThis.fetch;

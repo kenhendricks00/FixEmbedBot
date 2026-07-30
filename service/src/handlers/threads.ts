@@ -11,6 +11,7 @@ import { platformColors, getBrandedSiteName, formatStats } from '../utils/embed.
 import { deriveMetaShortcodeTimestamp, normalizePostTimestamp } from '../utils/timestamp.ts';
 
 const THREADS_TOTAL_TIMEOUT_MS = 4500;
+const THREADS_SHARE_TIMEOUT_MS = 1400;
 const THREADS_GRAPHQL_TIMEOUT_MS = 3500;
 const THREADS_OEMBED_TIMEOUT_MS = 1400;
 const THREADS_PROFILE_TIMEOUT_MS = 1200;
@@ -277,27 +278,85 @@ export const threadsHandler: PlatformHandler = {
     patterns: [
         /threads\.(?:net|com)\/@?([^\/]+)\/post\/([^\/\?]+)/i,
         /threads\.(?:net|com)\/t\/([^\/\?]+)/i,
+        /threads\.(?:net|com)\/share\/([^\/\?]+)/i,
     ],
 
     async handle(url: string, env: Env): Promise<HandlerResponse> {
-        const normalizedUrl = url.replace(/threads\.com/i, 'threads.net');
+        let inputUrl: URL;
+        try {
+            inputUrl = new URL(url);
+        } catch {
+            return { success: false, error: 'Invalid Threads URL' };
+        }
+        const inputHost = inputUrl.hostname.toLowerCase().replace(/^www\./, '');
+        if (
+            inputUrl.protocol !== 'https:'
+            || !['threads.net', 'threads.com'].includes(inputHost)
+            || inputUrl.username
+            || inputUrl.password
+            || (inputUrl.port && inputUrl.port !== '443')
+        ) {
+            return { success: false, error: 'Invalid Threads URL' };
+        }
 
-        // Parse URL to extract post info
-        const postMatch = normalizedUrl.match(/threads\.(?:net|com)\/@?([^\/]+)\/post\/([^\/\?]+)/i);
-        const shortMatch = normalizedUrl.match(/threads\.(?:net|com)\/t\/([^\/\?]+)/i);
+        const remainingProviderTime = createTimeoutBudget(THREADS_TOTAL_TIMEOUT_MS);
+        let resolvedUrl = inputUrl;
+        const isShareUrl = /^\/share\/[A-Za-z0-9_-]+\/?$/i.test(inputUrl.pathname);
+        if (isShareUrl) {
+            const safeShareUrl = `https://www.${inputHost}${inputUrl.pathname}`;
+            try {
+                const response = await fetchWithTimeout(safeShareUrl, {
+                    redirect: 'manual',
+                    headers: {
+                        'Accept': 'text/html,application/xhtml+xml',
+                        'User-Agent': 'Mozilla/5.0 (compatible; FixEmbed/1.0; +https://fixembed.app)',
+                    },
+                }, remainingProviderTime(THREADS_SHARE_TIMEOUT_MS));
+                const location = response.headers.get('location');
+                if (!location) {
+                    return { success: false, error: 'Unable to resolve Threads share URL', redirect: url };
+                }
+
+                const destination = new URL(location, safeShareUrl);
+                const destinationHost = destination.hostname.toLowerCase().replace(/^www\./, '');
+                if (
+                    destination.protocol !== 'https:'
+                    || !['threads.net', 'threads.com'].includes(destinationHost)
+                    || destination.username
+                    || destination.password
+                    || (destination.port && destination.port !== '443')
+                    || !/^\/@?[^/]+\/post\/[^/]+\/?$/i.test(destination.pathname)
+                ) {
+                    return { success: false, error: 'Invalid Threads share redirect', redirect: url };
+                }
+                resolvedUrl = destination;
+            } catch (error) {
+                return {
+                    success: false,
+                    error: error instanceof Error ? error.message : 'Unable to resolve Threads share URL',
+                    redirect: url,
+                };
+            }
+        }
+
+        // Parse the canonical post path after resolving any share URL.
+        const postMatch = resolvedUrl.pathname.match(/^\/@?([^/]+)\/post\/([^/]+)\/?$/i);
+        const shortMatch = resolvedUrl.pathname.match(/^\/t\/([^/]+)\/?$/i);
 
         if (!postMatch && !shortMatch) {
             return { success: false, error: 'Invalid Threads URL' };
         }
 
         let username = postMatch?.[1] || 'Thread';
-        let postCode = postMatch?.[2] || shortMatch?.[1] || '';
+        const postCode = postMatch?.[2] || shortMatch?.[1] || '';
 
         // Clean up username (remove @ if present)
         username = username.replace('@', '');
+        const normalizedUrl = postMatch
+            ? `https://www.threads.net/@${username}/post/${postCode}`
+            : `https://www.threads.net/t/${postCode}`;
 
         try {
-            const remainingProviderTime = createTimeoutBudget(THREADS_TOTAL_TIMEOUT_MS);
             // Try GraphQL API first
             const graphqlResult = await fetchThreadsGraphQL(
                 postCode,
