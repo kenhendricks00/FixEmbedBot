@@ -2509,6 +2509,101 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'redditHandler recovers playable video from the crawler DASH manifest',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const shareUrl = 'https://www.reddit.com/r/marvelrivals/s/HWuXlcFC1A';
+            const postPath = '/r/marvelrivals/comments/1vclj7w/avengers_vs_ultron_animation_by_sarpsarter/';
+            const canonicalUrl = `https://www.reddit.com${postPath}`;
+            const posterUrl = 'https://external-preview.redd.it/video-poster.png?width=1200&auto=webp';
+            const manifestUrl = 'https://v.redd.it/99iz27q26rgh1/DASHPlaylist.mpd?a=signed&v=1';
+            const requested: string[] = [];
+
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                requested.push(url);
+                if (url === shareUrl) {
+                    return new Response('', {
+                        status: 301,
+                        headers: { Location: canonicalUrl },
+                    });
+                }
+                if (url.includes('/comments/') && url.includes('.json')) {
+                    return new Response('blocked', { status: 403, statusText: 'Forbidden' });
+                }
+                if (url.startsWith('https://old.reddit.com/')) {
+                    return new Response(`
+                        <meta name="description" content="A playable Reddit video">
+                        <meta property="og:image" content="${posterUrl.replace(/&/g, '&amp;')}">
+                        <div class="thing link" id="thing_t3_1vclj7w"
+                            data-author="nemesisdelta24"
+                            data-subreddit="marvelrivals"
+                            data-timestamp="1785585663000"
+                            data-url="https://v.redd.it/99iz27q26rgh1"
+                            data-permalink="${postPath}"
+                            data-comments-count="16"
+                            data-score="913"
+                            data-nsfw="false">
+                            <a class="title may-blank outbound" href="https://v.redd.it/99iz27q26rgh1">Avengers vs. ULTRON! Animation By @SarpSarter</a>
+                            <div id="video-1vclj7w"
+                                data-mpd-url="${manifestUrl.replace(/&/g, '&amp;')}"
+                                data-video-height="486"
+                                data-video-width="864"></div>
+                        </div>
+                        <div class="child"></div>
+                    `, { status: 200, headers: { 'Content-Type': 'text/html' } });
+                }
+                if (url === manifestUrl) {
+                    return new Response(`
+                        <MPD>
+                            <Period>
+                                <AdaptationSet contentType="video">
+                                    <Representation bandwidth="840136" height="360" mimeType="video/mp4" width="640">
+                                        <BaseURL>CMAF_360.mp4</BaseURL>
+                                    </Representation>
+                                    <Representation bandwidth="2557152" height="720" mimeType="video/mp4" width="1280">
+                                        <BaseURL>CMAF_720.mp4</BaseURL>
+                                    </Representation>
+                                    <Representation bandwidth="5000000" height="1080" mimeType="video/mp4" width="1920">
+                                        <BaseURL>https://example.com/untrusted-video.mp4</BaseURL>
+                                    </Representation>
+                                </AdaptationSet>
+                                <AdaptationSet contentType="audio">
+                                    <Representation bandwidth="132913" mimeType="audio/mp4">
+                                        <BaseURL>CMAF_AUDIO_128.mp4</BaseURL>
+                                    </Representation>
+                                </AdaptationSet>
+                            </Period>
+                        </MPD>
+                    `, { status: 200, headers: { 'Content-Type': 'application/dash+xml' } });
+                }
+                if (url === 'https://api.reddit.com/r/marvelrivals/about?raw_json=1') {
+                    return new Response(JSON.stringify({ data: {} }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await redditHandler.handle(shareUrl, env);
+
+                assert.equal(response.success, true);
+                assert.deepEqual(response.data?.video, {
+                    url: 'https://v.redd.it/99iz27q26rgh1/CMAF_720.mp4',
+                    width: 1280,
+                    height: 720,
+                    thumbnail: posterUrl,
+                });
+                assert.equal(response.data?.image, undefined);
+                assert.equal(requested.includes(manifestUrl), true);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'redditHandler recovers current link-post metadata and the article preview image',
         run: async () => {
             const originalFetch = globalThis.fetch;
@@ -5355,7 +5450,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v13']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v14']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

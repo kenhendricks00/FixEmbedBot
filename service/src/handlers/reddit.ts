@@ -77,6 +77,7 @@ interface RedditOEmbedResponse {
 
 const REDDIT_FALLBACK_ICON = 'https://www.redditstatic.com/desktop2x/img/favicon/android-icon-192x192.png';
 const MAX_ARTICLE_HTML_BYTES = 512_000;
+const MAX_REDDIT_MANIFEST_BYTES = 128_000;
 
 function decodeRedditHtml(value: string): string {
     return value
@@ -216,9 +217,9 @@ function linkedArticleSection(value: string | undefined) {
     }];
 }
 
-async function readArticleHtml(response: Response): Promise<string> {
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
     const declared = Number.parseInt(response.headers.get('Content-Length') || '', 10);
-    if (Number.isFinite(declared) && declared > MAX_ARTICLE_HTML_BYTES) return '';
+    if (Number.isFinite(declared) && declared > maxBytes) return '';
     if (!response.body) return '';
 
     const reader = response.body.getReader();
@@ -229,7 +230,7 @@ async function readArticleHtml(response: Response): Promise<string> {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > MAX_ARTICLE_HTML_BYTES) {
+        if (size > maxBytes) {
             await reader.cancel();
             return '';
         }
@@ -259,7 +260,7 @@ async function fetchArticleImage(articleUrl: string | undefined): Promise<string
         }, 5_000);
         const contentType = response.headers.get('Content-Type') || '';
         if (!response.ok || !/^text\/html\b/i.test(contentType)) return undefined;
-        const html = await readArticleHtml(response);
+        const html = await readBoundedText(response, MAX_ARTICLE_HTML_BYTES);
         const image = articleMetaContent(html, 'og:image') || articleMetaContent(html, 'twitter:image');
         return image ? publicHttpsUrl(image, articleUrl)?.toString() : undefined;
     } catch {
@@ -272,6 +273,93 @@ function htmlAttribute(tag: string, name: string): string {
     return decodeRedditHtml(
         tag.match(new RegExp(`\\b${escaped}=["']([^"']*)["']`, 'i'))?.[1] || '',
     );
+}
+
+async function redditVideoFromHtml(
+    html: string,
+    thumbnail?: string,
+): Promise<{ url: string; width: number; height: number; thumbnail?: string } | undefined> {
+    const playerTag = html.match(/<div\b(?=[^>]*\bdata-mpd-url=["'])[^>]*>/i)?.[0];
+    if (!playerTag) return undefined;
+
+    const manifestUrl = publicHttpsUrl(htmlAttribute(playerTag, 'data-mpd-url'));
+    if (
+        !manifestUrl
+        || manifestUrl.hostname.toLowerCase() !== 'v.redd.it'
+        || !/\/DASHPlaylist\.mpd$/i.test(manifestUrl.pathname)
+    ) {
+        return undefined;
+    }
+
+    try {
+        const response = await fetchWithTimeout(manifestUrl.toString(), {
+            redirect: 'manual',
+            headers: {
+                'Accept': 'application/dash+xml,application/xml;q=0.9',
+                'User-Agent': 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)',
+            },
+        }, 5_000);
+        const contentType = response.headers.get('Content-Type') || '';
+        if (
+            !response.ok
+            || !/^(?:application\/(?:dash\+xml|xml)|text\/xml)\b/i.test(contentType)
+        ) {
+            return undefined;
+        }
+
+        const manifest = await readBoundedText(response, MAX_REDDIT_MANIFEST_BYTES);
+        if (!manifest) return undefined;
+
+        const candidates: Array<{
+            url: string;
+            width: number;
+            height: number;
+            bandwidth: number;
+        }> = [];
+        for (const match of manifest.matchAll(/<Representation\b[^>]*>[\s\S]*?<\/Representation>/gi)) {
+            const representation = match[0];
+            const tag = representation.match(/<Representation\b[^>]*>/i)?.[0] || '';
+            if (htmlAttribute(tag, 'mimeType').toLowerCase() !== 'video/mp4') continue;
+
+            const rawBaseUrl = representation.match(/<BaseURL\b[^>]*>([^<]+)<\/BaseURL>/i)?.[1] || '';
+            const mediaUrl = publicHttpsUrl(rawBaseUrl, manifestUrl.toString());
+            if (
+                !mediaUrl
+                || mediaUrl.hostname.toLowerCase() !== manifestUrl.hostname.toLowerCase()
+                || !/\.mp4$/i.test(mediaUrl.pathname)
+            ) {
+                continue;
+            }
+
+            const width = Number(htmlAttribute(tag, 'width'));
+            const height = Number(htmlAttribute(tag, 'height'));
+            const bandwidth = Number(htmlAttribute(tag, 'bandwidth'));
+            if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) continue;
+            candidates.push({
+                url: mediaUrl.toString(),
+                width,
+                height,
+                bandwidth: Number.isFinite(bandwidth) ? bandwidth : 0,
+            });
+        }
+
+        candidates.sort(
+            (left, right) => right.height - left.height
+                || right.width - left.width
+                || right.bandwidth - left.bandwidth,
+        );
+        const best = candidates[0];
+        if (!best) return undefined;
+
+        return {
+            url: best.url,
+            width: best.width,
+            height: best.height,
+            thumbnail,
+        };
+    } catch {
+        return undefined;
+    }
 }
 
 function redditGalleryImagesFromHtml(html: string): string[] {
@@ -365,11 +453,17 @@ async function recoverFromRedditCrawlerPage(
         1200,
     );
     const fallbackImage = articleMetaContent(html, 'og:image');
-    const image = directImageUrl
+    const thumbnail = fallbackImage
+        ? publicHttpsUrl(fallbackImage, pageUrl)?.toString()
+        : undefined;
+    const video = await redditVideoFromHtml(postHtml, thumbnail);
+    const image = video
+        ? undefined
+        : directImageUrl
         || (images.length ? undefined : await fetchArticleImage(articleUrl))
-        || (images.length || !fallbackImage
+        || (images.length || !thumbnail
             ? undefined
-            : publicHttpsUrl(fallbackImage, pageUrl)?.toString());
+            : thumbnail);
     const canonicalUrl = permalink
         ? new URL(permalink, 'https://www.reddit.com').toString()
         : `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/comments/${encodeURIComponent(postId)}/`;
@@ -393,6 +487,7 @@ async function recoverFromRedditCrawlerPage(
             authorAvatar,
             image,
             images: images.length ? images : undefined,
+            video,
             color: platformColors.reddit,
             platform: 'reddit',
             stats: formatStats({ comments, likes: score }),
