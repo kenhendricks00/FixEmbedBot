@@ -2327,6 +2327,77 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'redditHandler recovers NSFW galleries from Reddit embed HTML',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const galleryImages = Array.from(
+                { length: 7 },
+                (_, index) => `https://preview.redd.it/gallery-${index + 1}.jpg?width=1080&format=pjpg&auto=webp&s=image-${index + 1}`,
+            );
+
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                if (url.includes('/comments/') && url.includes('.json')) {
+                    return new Response('blocked', { status: 403, statusText: 'Forbidden' });
+                }
+                if (url.startsWith('https://old.reddit.com/')) {
+                    return new Response('<html><title>Log in</title></html>', {
+                        status: 200,
+                        headers: { 'Content-Type': 'text/html' },
+                    });
+                }
+                if (url.startsWith('https://embed.reddit.com/')) {
+                    const gallery = galleryImages.map((image, index) => `
+                        <li>
+                            <img alt="gallery image ${index + 1}" class="h-full w-full object-contain"
+                                loading="lazy" fetchpriority="${index === 0 ? 'auto' : 'low'}"
+                                src="${image.replace(/&/g, '&amp;')}"
+                                srcset="${image.replace(/&/g, '&amp;')} 1080w">
+                        </li>
+                    `).join('');
+                    return new Response(`
+                        <a href="https://www.reddit.com/r/unstable_diffusion/">
+                            <img alt="subreddit icon" src="https://styles.redditmedia.com/subreddit-icon.png">
+                        </a>
+                        <a href="https://www.reddit.com/user/gallery_author/">author</a>
+                        <shreddit-embed-title>Gallery post</shreddit-embed-title>
+                        <gallery-carousel post-id="t3_nsfw123">
+                            <shreddit-aspect-ratio is-nsfw-blocked is-embed>
+                                <ol>${gallery}</ol>
+                            </shreddit-aspect-ratio>
+                        </gallery-carousel>
+                    `, {
+                        status: 200,
+                        headers: { 'Content-Type': 'text/html' },
+                    });
+                }
+                if (url.includes('/about')) {
+                    return new Response(JSON.stringify({
+                        data: {
+                            community_icon: 'https://styles.redditmedia.com/subreddit-icon.png',
+                        },
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await redditHandler.handle(
+                    'https://reddit.com/r/unstable_diffusion/comments/nsfw123/gallery_post/',
+                    env,
+                );
+
+                assert.equal(response.success, true);
+                assert.equal(response.data?.image, undefined);
+                assert.deepEqual(response.data?.images, galleryImages);
+                assert.equal(response.data?.sensitive, true);
+                assert.deepEqual(response.data?.sensitivityTypes, ['nsfw']);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'redditHandler prefers direct Reddit image media across source paths',
         run: async () => {
             const originalFetch = globalThis.fetch;
@@ -5464,7 +5535,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v15']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v16']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

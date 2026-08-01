@@ -469,6 +469,27 @@ function redditGalleryImagesFromHtml(html: string): string[] {
     return candidates.map(({ url }) => url);
 }
 
+function redditEmbedGalleryImagesFromHtml(html: string): string[] {
+    const gallery = html.match(
+        /<gallery-carousel\b[^>]*>([\s\S]*?)<\/gallery-carousel>/i,
+    )?.[1];
+    if (!gallery) return [];
+
+    const images: string[] = [];
+    const seen = new Set<string>();
+    for (const match of gallery.matchAll(/<img\b[^>]*>/gi)) {
+        const media = publicHttpsUrl(htmlAttribute(match[0], 'src'));
+        if (!media || !/(^|\.)preview\.redd\.it$/i.test(media.hostname)) continue;
+        if (!/\.(?:jpe?g|png|gif|webp)$/i.test(media.pathname)) continue;
+
+        const url = media.toString();
+        if (seen.has(url)) continue;
+        seen.add(url);
+        images.push(url);
+    }
+    return images;
+}
+
 async function recoverFromRedditCrawlerPage(
     subreddit: string,
     postId: string,
@@ -613,6 +634,7 @@ async function recoverFromRedditEmbed(
             if (title) {
                 const author = html.match(/reddit\.com\/user\/([^/"?]+)/i)?.[1];
                 const subredditIcon = html.match(/<img\b[^>]*\bsrc="(https:\/\/styles\.redditmedia\.com\/[^"]+)"[^>]*>/i)?.[1];
+                const images = redditEmbedGalleryImagesFromHtml(html);
                 const embeddedImage = html.match(/<img\s+src="(https:\/\/preview\.redd\.it\/[^"]+)"/i)?.[1];
                 const outboundUrl = html.match(/&quot;url&quot;:&quot;([\s\S]*?)&quot;/i)?.[1];
                 const articleUrl = linkedArticleUrl(outboundUrl ? decodeRedditHtml(outboundUrl) : '');
@@ -629,7 +651,11 @@ async function recoverFromRedditEmbed(
                 const video = redditMuxedVideoFromHtml(html, thumbnail);
                 const image = video
                     ? undefined
-                    : thumbnail || await fetchArticleImage(articleUrl);
+                    : images.length
+                        ? undefined
+                        : thumbnail || await fetchArticleImage(articleUrl);
+                const nsfw = /<shreddit-aspect-ratio\b(?=[^>]*\bis-nsfw-blocked(?:\s|=|>))[^>]*>/i.test(html);
+                const sensitivityTypes = nsfw ? ['nsfw' as const] : undefined;
 
                 return {
                     success: true,
@@ -643,12 +669,15 @@ async function recoverFromRedditEmbed(
                         authorUrl: displayAuthor ? `https://www.reddit.com/user/${encodeURIComponent(displayAuthor)}/` : undefined,
                         authorAvatar,
                         image,
+                        images: images.length ? images : undefined,
                         video,
                         color: platformColors.reddit,
                         platform: 'reddit',
                         stats: formatStats({ comments, likes: score }),
                         timestamp: extractPostTimestampFromHtml(html),
                         sections: linkedArticleSection(articleUrl),
+                        sensitive: nsfw,
+                        sensitivityTypes,
                     },
                 };
             }
