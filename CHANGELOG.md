@@ -15,7 +15,7 @@
 - Expanded Reddit link posts with their linked article, preview image, subreddit identity, publication time, upvotes, and comments.
 - Corrected subreddit avatars to use Reddit's community icon instead of unrelated legacy header artwork.
 - Restored image posts by preferring Reddit's direct media files over crawler thumbnails that Discord cannot load.
-- Restored playable Reddit videos when the JSON API is blocked by recovering trusted MP4 media from Reddit's bounded DASH manifest instead of rendering only the poster image.
+- Restored playable Reddit videos with audio when the JSON API is blocked by preferring Reddit's signed, muxed packaged media and falling back to bounded DASH recovery instead of rendering only the poster image.
 
 #### **Free all-platform translation**
 - Made the default translation setting free and applied it to every supported social platform.

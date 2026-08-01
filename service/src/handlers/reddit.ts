@@ -77,7 +77,16 @@ interface RedditOEmbedResponse {
 
 const REDDIT_FALLBACK_ICON = 'https://www.redditstatic.com/desktop2x/img/favicon/android-icon-192x192.png';
 const MAX_ARTICLE_HTML_BYTES = 512_000;
+const MAX_REDDIT_EMBED_HTML_BYTES = 512_000;
 const MAX_REDDIT_MANIFEST_BYTES = 128_000;
+const MAX_REDDIT_VIDEO_HEIGHT = 720;
+
+type RedditVideo = {
+    url: string;
+    width: number;
+    height: number;
+    thumbnail?: string;
+};
 
 function decodeRedditHtml(value: string): string {
     return value
@@ -278,7 +287,7 @@ function htmlAttribute(tag: string, name: string): string {
 async function redditVideoFromHtml(
     html: string,
     thumbnail?: string,
-): Promise<{ url: string; width: number; height: number; thumbnail?: string } | undefined> {
+): Promise<RedditVideo | undefined> {
     const playerTag = html.match(/<div\b(?=[^>]*\bdata-mpd-url=["'])[^>]*>/i)?.[0];
     if (!playerTag) return undefined;
 
@@ -362,6 +371,70 @@ async function redditVideoFromHtml(
     }
 }
 
+function redditMuxedVideoFromHtml(html: string, thumbnail?: string): RedditVideo | undefined {
+    const decoded = decodeRedditHtml(html);
+    const candidates: RedditVideo[] = [];
+    const sourcePattern = /"source"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"\s*,\s*"dimensions"\s*:\s*\{\s*"width"\s*:\s*(\d+)\s*,\s*"height"\s*:\s*(\d+)\s*\}[\s\S]{0,200}?\}/gi;
+
+    for (const match of decoded.matchAll(sourcePattern)) {
+        let rawUrl = match[1];
+        try {
+            rawUrl = JSON.parse(`"${rawUrl}"`) as string;
+        } catch {
+            rawUrl = rawUrl.replace(/\\u0026/gi, '&').replace(/\\\//g, '/');
+        }
+
+        const mediaUrl = publicHttpsUrl(rawUrl);
+        const width = Number(match[2]);
+        const height = Number(match[3]);
+        if (
+            !mediaUrl
+            || mediaUrl.hostname.toLowerCase() !== 'packaged-media.redd.it'
+            || !/\.mp4$/i.test(mediaUrl.pathname)
+            || !Number.isFinite(width)
+            || width <= 0
+            || !Number.isFinite(height)
+            || height <= 0
+        ) {
+            continue;
+        }
+
+        candidates.push({
+            url: mediaUrl.toString(),
+            width,
+            height,
+            thumbnail,
+        });
+    }
+
+    candidates.sort((left, right) => right.height - left.height || right.width - left.width);
+    return candidates.find(({ height }) => height <= MAX_REDDIT_VIDEO_HEIGHT) || candidates[0];
+}
+
+async function fetchRedditMuxedVideo(
+    subreddit: string,
+    postId: string,
+    thumbnail?: string,
+): Promise<RedditVideo | undefined> {
+    const embedUrl = `https://embed.reddit.com/r/${encodeURIComponent(safeDecodeURIComponent(subreddit))}/comments/${encodeURIComponent(safeDecodeURIComponent(postId))}/`;
+    try {
+        const response = await fetchWithTimeout(embedUrl, {
+            redirect: 'manual',
+            headers: {
+                'Accept': 'text/html',
+                'User-Agent': 'Mozilla/5.0 (compatible; FixEmbed/1.0; +https://fixembed.app)',
+            },
+        }, 5_000);
+        const contentType = response.headers.get('Content-Type') || '';
+        if (!response.ok || !/^text\/html\b/i.test(contentType)) return undefined;
+
+        const html = await readBoundedText(response, MAX_REDDIT_EMBED_HTML_BYTES);
+        return html ? redditMuxedVideoFromHtml(html, thumbnail) : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 function redditGalleryImagesFromHtml(html: string): string[] {
     const candidates: Array<{ index: number; position?: number; url: string }> = [];
     const seen = new Set<string>();
@@ -409,7 +482,8 @@ async function recoverFromRedditCrawlerPage(
     });
     if (!response.ok) return null;
 
-    const html = await response.text();
+    const html = await readBoundedText(response, MAX_ARTICLE_HTML_BYTES);
+    if (!html) return null;
     const escapedPostId = postId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const postTag = html.match(
         new RegExp(`<div\\b(?=[^>]*\\bid=["']thing_t3_${escapedPostId}["'])[^>]*>`, 'i'),
@@ -456,7 +530,11 @@ async function recoverFromRedditCrawlerPage(
     const thumbnail = fallbackImage
         ? publicHttpsUrl(fallbackImage, pageUrl)?.toString()
         : undefined;
-    const video = await redditVideoFromHtml(postHtml, thumbnail);
+    const hasVideoPlayer = /<div\b(?=[^>]*\bdata-mpd-url=["'])[^>]*>/i.test(postHtml);
+    const video = hasVideoPlayer
+        ? await fetchRedditMuxedVideo(subreddit, postId, thumbnail)
+            || await redditVideoFromHtml(postHtml, thumbnail)
+        : undefined;
     const image = video
         ? undefined
         : directImageUrl
@@ -529,7 +607,7 @@ async function recoverFromRedditEmbed(
             },
         });
         if (response.ok) {
-            const html = await response.text();
+            const html = await readBoundedText(response, MAX_REDDIT_EMBED_HTML_BYTES);
             const title = html.match(/<shreddit-embed-title>([\s\S]*?)<\/shreddit-embed-title>/i)?.[1]
                 || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
             if (title) {
@@ -547,9 +625,11 @@ async function recoverFromRedditEmbed(
                     subredditIcon ? decodeRedditHtml(subredditIcon) : '',
                     redditCookieHeader(response),
                 );
-                const image = embeddedImage
-                    ? decodeRedditHtml(embeddedImage)
-                    : await fetchArticleImage(articleUrl);
+                const thumbnail = embeddedImage ? decodeRedditHtml(embeddedImage) : undefined;
+                const video = redditMuxedVideoFromHtml(html, thumbnail);
+                const image = video
+                    ? undefined
+                    : thumbnail || await fetchArticleImage(articleUrl);
 
                 return {
                     success: true,
@@ -563,6 +643,7 @@ async function recoverFromRedditEmbed(
                         authorUrl: displayAuthor ? `https://www.reddit.com/user/${encodeURIComponent(displayAuthor)}/` : undefined,
                         authorAvatar,
                         image,
+                        video,
                         color: platformColors.reddit,
                         platform: 'reddit',
                         stats: formatStats({ comments, likes: score }),
@@ -702,17 +783,21 @@ export const redditHandler: PlatformHandler = {
             let image: string | undefined;
             const images = redditGalleryImages(post);
             const directImageUrl = directRedditImageUrl(post.url);
-            let video: { url: string; width: number; height: number; thumbnail?: string } | undefined;
+            let video: RedditVideo | undefined;
 
             // Video content
             const redditVideo = post.secure_media?.reddit_video || post.media?.reddit_video;
             if (post.is_video && redditVideo) {
-                video = {
-                    url: redditVideo.fallback_url,
-                    width: redditVideo.width,
-                    height: redditVideo.height,
-                    thumbnail: post.thumbnail !== 'self' ? post.thumbnail : undefined,
-                };
+                const thumbnail = post.thumbnail !== 'self'
+                    ? decodeRedditHtml(post.thumbnail)
+                    : undefined;
+                video = await fetchRedditMuxedVideo(post.subreddit, parsed.postId, thumbnail)
+                    || {
+                        url: redditVideo.fallback_url,
+                        width: redditVideo.width,
+                        height: redditVideo.height,
+                        thumbnail,
+                    };
             }
             // Image content
             else if (!images.length && directImageUrl) {

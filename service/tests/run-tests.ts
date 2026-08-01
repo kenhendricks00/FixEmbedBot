@@ -2509,7 +2509,7 @@ const tests: TestCase[] = [
         },
     },
     {
-        name: 'redditHandler recovers playable video from the crawler DASH manifest',
+        name: 'redditHandler recovers playable Reddit video with audio from packaged media',
         run: async () => {
             const originalFetch = globalThis.fetch;
             const shareUrl = 'https://www.reddit.com/r/marvelrivals/s/HWuXlcFC1A';
@@ -2517,6 +2517,8 @@ const tests: TestCase[] = [
             const canonicalUrl = `https://www.reddit.com${postPath}`;
             const posterUrl = 'https://external-preview.redd.it/video-poster.png?width=1200&auto=webp';
             const manifestUrl = 'https://v.redd.it/99iz27q26rgh1/DASHPlaylist.mpd?a=signed&v=1';
+            const embedUrl = 'https://embed.reddit.com/r/marvelrivals/comments/1vclj7w/';
+            const muxedVideoUrl = 'https://packaged-media.redd.it/99iz27q26rgh1/pb/m2-res_720p.mp4?m=DASHPlaylist.mpd&c=wh_ben_en&var=sgpssan&v=1&e=1785636000&s=signed720';
             const requested: string[] = [];
 
             globalThis.fetch = async (input) => {
@@ -2577,6 +2579,17 @@ const tests: TestCase[] = [
                         </MPD>
                     `, { status: 200, headers: { 'Content-Type': 'application/dash+xml' } });
                 }
+                if (url === embedUrl) {
+                    return new Response(`
+                        <div data-testid="video-content">
+                            {&quot;mediaSources&quot;:[
+                                {&quot;source&quot;:{&quot;url&quot;:&quot;https://packaged-media.redd.it/99iz27q26rgh1/pb/m2-res_360p.mp4?m=DASHPlaylist.mpd&amp;c=wh_ben_en&amp;v=1&quot;,&quot;dimensions&quot;:{&quot;width&quot;:640,&quot;height&quot;:360},&quot;videoCodec&quot;:&quot;H264&quot;}},
+                                {&quot;source&quot;:{&quot;url&quot;:&quot;${muxedVideoUrl.replace(/&/g, '&amp;')}&quot;,&quot;dimensions&quot;:{&quot;width&quot;:1280,&quot;height&quot;:720},&quot;videoCodec&quot;:&quot;H264&quot;}},
+                                {&quot;source&quot;:{&quot;url&quot;:&quot;https://example.com/untrusted-1080p.mp4?m=DASHPlaylist.mpd&quot;,&quot;dimensions&quot;:{&quot;width&quot;:1920,&quot;height&quot;:1080},&quot;videoCodec&quot;:&quot;H264&quot;}}
+                            ]}
+                        </div>
+                    `, { status: 200, headers: { 'Content-Type': 'text/html' } });
+                }
                 if (url === 'https://api.reddit.com/r/marvelrivals/about?raw_json=1') {
                     return new Response(JSON.stringify({ data: {} }), {
                         status: 200,
@@ -2591,13 +2604,14 @@ const tests: TestCase[] = [
 
                 assert.equal(response.success, true);
                 assert.deepEqual(response.data?.video, {
-                    url: 'https://v.redd.it/99iz27q26rgh1/CMAF_720.mp4',
+                    url: muxedVideoUrl,
                     width: 1280,
                     height: 720,
                     thumbnail: posterUrl,
                 });
                 assert.equal(response.data?.image, undefined);
-                assert.equal(requested.includes(manifestUrl), true);
+                assert.equal(requested.includes(embedUrl), true);
+                assert.equal(requested.includes(manifestUrl), false);
             } finally {
                 globalThis.fetch = originalFetch;
             }
@@ -5450,7 +5464,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v14']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v15']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'
