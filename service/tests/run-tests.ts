@@ -555,6 +555,106 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'tiktokHandler resolves vt short links through TikTok mobile redirects',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (input, init) => {
+                const requested = String(input);
+                if (requested === 'https://vt.tiktok.com/ZS4AGvTSJ/') {
+                    assert.equal(init?.redirect, 'manual');
+                    return new Response(null, {
+                        status: 301,
+                        headers: {
+                            Location: 'https://m.tiktok.com/v/7667963251073797398.html?_t=example',
+                        },
+                    });
+                }
+                if (requested === 'https://www.tiktok.com/@/video/7667963251073797398') {
+                    return new Response(`
+                        <script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">
+                        {
+                            "__DEFAULT_SCOPE__": {
+                                "webapp.video-detail": {
+                                    "itemInfo": {
+                                        "itemStruct": {
+                                            "id": "7667963251073797398",
+                                            "desc": "How would a medieval peasant react to the internet?",
+                                            "author": {
+                                                "uniqueId": "miscellaneousness0",
+                                                "nickname": "Miscellaneousness",
+                                                "avatarLarger": "https://p16-sign.tiktokcdn-us.com/avatar.jpeg"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        </script>
+                    `, { headers: { 'Content-Type': 'text/html' } });
+                }
+                if (requested.startsWith('https://www.tiktok.com/oembed?url=')) {
+                    return Response.json({
+                        title: 'How would a medieval peasant react to the internet?',
+                        author_name: 'Miscellaneousness',
+                        author_unique_id: 'miscellaneousness0',
+                        thumbnail_url: 'https://p16-sign.tiktokcdn-us.com/cover.jpeg',
+                    });
+                }
+                const fxTikTokPage = requested.match(
+                    /^https:\/\/www\.tnktok\.com\/api\/v1\/statuses\/7667963251073797398(?:\?page=(\d+))?$/,
+                );
+                if (fxTikTokPage) {
+                    const page = Number(fxTikTokPage[1] || 1);
+                    const firstImage = (page - 1) * 4 + 1;
+                    return Response.json({
+                        id: page === 1
+                            ? '7667963251073797398'
+                            : `7667963251073797398page${page}`,
+                        url: `https://tiktok.com/@miscellaneousness0/video/7667963251073797398?page=${page}`,
+                        account: {
+                            username: 'miscellaneousness0',
+                            display_name: 'Miscellaneousness',
+                            avatar: 'https://offload.tnktok.com/generate/pfp/6804909377000358917',
+                        },
+                        media_attachments: Array.from({ length: 4 }, (_, index) => {
+                            const imageNumber = firstImage + index;
+                            return {
+                                type: 'image',
+                                url: `https://offload.tnktok.com/generate/image/7667963251073797398/${imageNumber}`,
+                                description: `Image (${imageNumber} of 25)`,
+                            };
+                        }),
+                    });
+                }
+                assert.fail(`Unexpected TikTok request: ${requested}`);
+            };
+            try {
+                const response = await tiktokHandler.handle(
+                    'https://vt.tiktok.com/ZS4AGvTSJ/',
+                    env,
+                );
+                assert.equal(response.success, true);
+                assert.equal(response.source, 'fallback');
+                assert.equal(response.data?.authorHandle, '@miscellaneousness0');
+                assert.equal(
+                    response.data?.url,
+                    'https://www.tiktok.com/@miscellaneousness0/video/7667963251073797398',
+                );
+                assert.equal(response.data?.images?.length, 10);
+                assert.equal(
+                    response.data?.images?.[0],
+                    'https://offload.tnktok.com/generate/image/7667963251073797398/1',
+                );
+                assert.equal(
+                    response.data?.images?.[9],
+                    'https://offload.tnktok.com/generate/image/7667963251073797398/10',
+                );
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'tiktokHandler combines first-party metadata with stable FxTikTok media',
         run: async () => {
             const originalFetch = globalThis.fetch;

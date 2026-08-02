@@ -53,6 +53,19 @@ type TikTokProfile = {
     avatarMedium?: unknown;
 };
 
+type FxTikTokAttachment = {
+    type?: unknown;
+    url?: unknown;
+    preview_url?: unknown;
+    description?: unknown;
+    meta?: {
+        original?: {
+            width?: unknown;
+            height?: unknown;
+        };
+    };
+};
+
 type FxTikTokActivity = {
     id?: unknown;
     url?: unknown;
@@ -65,17 +78,7 @@ type FxTikTokActivity = {
         url?: unknown;
         avatar?: unknown;
     };
-    media_attachments?: Array<{
-        type?: unknown;
-        url?: unknown;
-        preview_url?: unknown;
-        meta?: {
-            original?: {
-                width?: unknown;
-                height?: unknown;
-            };
-        };
-    }>;
+    media_attachments?: FxTikTokAttachment[];
 };
 
 type ParsedTikTokUrl = {
@@ -86,7 +89,13 @@ type ParsedTikTokUrl = {
 
 const MAX_TIKTOK_HTML_BYTES = 1_000_000;
 const MAX_FXTIKTOK_BYTES = 256_000;
-const TIKTOK_HOSTS = new Set(['tiktok.com', 'www.tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com']);
+const TIKTOK_HOSTS = new Set([
+    'tiktok.com',
+    'www.tiktok.com',
+    'm.tiktok.com',
+    'vm.tiktok.com',
+    'vt.tiktok.com',
+]);
 const TIKTOK_MEDIA_SUFFIXES = [
     'tiktok.com',
     'tiktokcdn.com',
@@ -138,6 +147,17 @@ function standardTikTokUrl(url: URL): ParsedTikTokUrl | null {
     };
 }
 
+function mobileTikTokUrl(url: URL): ParsedTikTokUrl | null {
+    if (url.hostname.toLowerCase() !== 'm.tiktok.com') return null;
+    const match = url.pathname.match(/^\/v\/(\d+)\.html\/?$/i);
+    if (!match) return null;
+    return {
+        canonical: `https://www.tiktok.com/@/video/${match[1]}`,
+        handle: '',
+        postId: match[1],
+    };
+}
+
 async function resolveTikTokUrl(raw: string): Promise<ParsedTikTokUrl | null> {
     const initial = trustedTikTokUrl(raw);
     if (!initial) return null;
@@ -158,7 +178,7 @@ async function resolveTikTokUrl(raw: string): Promise<ParsedTikTokUrl | null> {
         const next = trustedTikTokUrl(new URL(location, current).toString());
         if (!next) return null;
         current = next;
-        const resolved = standardTikTokUrl(current);
+        const resolved = standardTikTokUrl(current) || mobileTikTokUrl(current);
         if (resolved) return resolved;
     }
     return null;
@@ -301,6 +321,9 @@ function firstPartyData(
     const itemHandle = text(item.author?.uniqueId).replace(/^@/, '');
     const oEmbedHandle = text(oEmbed?.author_unique_id).replace(/^@/, '');
     const handle = [itemHandle, oEmbedHandle, parsed.handle].find((value) => /^[\w.-]+$/.test(value)) || parsed.handle;
+    const canonical = handle
+        ? `https://www.tiktok.com/@${handle}/video/${parsed.postId}`
+        : parsed.canonical;
     const description = truncateText(text(item.desc) || text(oEmbed?.title), 3_000);
     const image = trustedTikTokMedia(item.video?.cover) || trustedTikTokMedia(oEmbed?.thumbnail_url);
     const playUrl = trustedTikTokMedia(item.video?.playAddr);
@@ -319,7 +342,7 @@ function firstPartyData(
     return {
         title: description || 'TikTok post',
         description,
-        url: parsed.canonical,
+        url: canonical,
         siteName: getBrandedSiteName('tiktok'),
         authorName: text(item.author?.nickname) || text(oEmbed?.author_name) || handle,
         authorHandle: `@${handle}`,
@@ -351,12 +374,10 @@ function stripActivityMarkup(value: unknown): string {
         .trim();
 }
 
-async function fetchFxTikTokFallback(
-    parsed: ParsedTikTokUrl,
-    oEmbed?: TikTokOEmbed,
-): Promise<HandlerResponse | undefined> {
+async function fetchFxTikTokActivity(postId: string, page = 1): Promise<FxTikTokActivity | undefined> {
+    const pageQuery = page > 1 ? `?page=${page}` : '';
     const response = await fetchWithTimeout(
-        `https://www.tnktok.com/api/v1/statuses/${parsed.postId}`,
+        `https://www.tnktok.com/api/v1/statuses/${postId}${pageQuery}`,
         {
             headers: {
                 'Accept': 'application/activity+json',
@@ -366,9 +387,27 @@ async function fetchFxTikTokFallback(
         6_000,
     );
     if (!response.ok) return undefined;
-    const activity = JSON.parse(
+    return JSON.parse(
         await readTextLimited(response, MAX_FXTIKTOK_BYTES),
     ) as FxTikTokActivity;
+}
+
+function declaredFxTikTokImageTotal(attachments: FxTikTokAttachment[]): number {
+    return attachments.reduce((largest, attachment) => {
+        const total = Number.parseInt(
+            text(attachment.description).match(/^Image \(\d+ of (\d+)\)$/i)?.[1] || '',
+            10,
+        );
+        return Number.isInteger(total) && total > largest ? total : largest;
+    }, 0);
+}
+
+async function fetchFxTikTokFallback(
+    parsed: ParsedTikTokUrl,
+    oEmbed?: TikTokOEmbed,
+): Promise<HandlerResponse | undefined> {
+    const activity = await fetchFxTikTokActivity(parsed.postId);
+    if (!activity) return undefined;
     const activityUrl = trustedTikTokUrl(text(activity.url));
     const identity = activityUrl ? standardTikTokUrl(activityUrl) : null;
     if (text(activity.id) !== parsed.postId || identity?.postId !== parsed.postId) return undefined;
@@ -380,9 +419,53 @@ async function fetchFxTikTokFallback(
         return undefined;
     }
 
-    const attachments = Array.isArray(activity.media_attachments)
+    let attachments = Array.isArray(activity.media_attachments)
         ? activity.media_attachments.slice(0, 10)
         : [];
+    const initialImageCount = attachments.filter((attachment) => attachment.type === 'image').length;
+    const declaredImageTotal = declaredFxTikTokImageTotal(attachments);
+    if (
+        initialImageCount === attachments.length
+        && initialImageCount > 0
+        && declaredImageTotal > initialImageCount
+    ) {
+        const targetImageCount = Math.min(declaredImageTotal, 10);
+        const pageCount = Math.min(3, Math.ceil(targetImageCount / initialImageCount));
+        const pageResults = await Promise.allSettled(
+            Array.from(
+                { length: Math.max(0, pageCount - 1) },
+                async (_, index) => {
+                    const page = index + 2;
+                    return {
+                        page,
+                        activity: await fetchFxTikTokActivity(parsed.postId, page),
+                    };
+                },
+            ),
+        );
+        for (const result of pageResults) {
+            if (result.status !== 'fulfilled' || !result.value.activity) continue;
+            const { page, activity: pageActivity } = result.value;
+            const pageUrl = trustedTikTokUrl(text(pageActivity.url));
+            const pageIdentity = pageUrl ? standardTikTokUrl(pageUrl) : null;
+            const pageHandle = text(pageActivity.account?.username).replace(/^@/, '');
+            const pageId = text(pageActivity.id);
+            if (
+                ![parsed.postId, `${parsed.postId}page${page}`].includes(pageId)
+                || pageIdentity?.postId !== parsed.postId
+                || pageIdentity.handle.toLowerCase() !== activityHandle.toLowerCase()
+                || pageHandle.toLowerCase() !== activityHandle.toLowerCase()
+            ) {
+                continue;
+            }
+            attachments.push(
+                ...(Array.isArray(pageActivity.media_attachments)
+                    ? pageActivity.media_attachments.filter((attachment) => attachment.type === 'image')
+                    : []),
+            );
+        }
+        attachments = attachments.slice(0, 10);
+    }
     const videoAttachment = attachments.find((attachment) => attachment.type === 'video');
     const videoUrl = trustedTikTokMedia(videoAttachment?.url);
     const video: VideoEmbed | undefined = videoUrl ? {
@@ -391,10 +474,10 @@ async function fetchFxTikTokFallback(
         height: positiveDimension(videoAttachment?.meta?.original?.height, 1024),
         thumbnail: trustedTikTokMedia(videoAttachment?.preview_url),
     } : undefined;
-    const images = attachments
+    const images = [...new Set(attachments
         .filter((attachment) => attachment.type === 'image')
         .map((attachment) => trustedTikTokMedia(attachment.url))
-        .filter((url): url is string => Boolean(url));
+        .filter((url): url is string => Boolean(url)))];
     if (!video && !images.length) return undefined;
 
     const description = truncateText(text(oEmbed?.title), 3_000);
@@ -405,7 +488,7 @@ async function fetchFxTikTokFallback(
         data: {
             title: description || 'TikTok post',
             description,
-            url: parsed.canonical,
+            url: identity.canonical,
             siteName: getBrandedSiteName('tiktok'),
             authorName: text(activity.account?.display_name) || text(oEmbed?.author_name) || activityHandle,
             authorHandle: `@${activityHandle}`,
@@ -487,13 +570,16 @@ export const tiktokHandler: PlatformHandler = {
             if (description || image) {
                 const responseHandle = text(oEmbed?.author_unique_id).replace(/^@/, '');
                 const handle = /^[\w.-]+$/.test(responseHandle) ? responseHandle : parsed.handle;
+                const canonical = handle
+                    ? `https://www.tiktok.com/@${handle}/video/${parsed.postId}`
+                    : parsed.canonical;
                 return {
                     success: true,
                     source: 'first-party',
                     data: {
                         title: description || 'TikTok post',
                         description,
-                        url: parsed.canonical,
+                        url: canonical,
                         siteName: getBrandedSiteName('tiktok'),
                         authorName: text(oEmbed?.author_name) || handle,
                         authorHandle: `@${handle}`,
