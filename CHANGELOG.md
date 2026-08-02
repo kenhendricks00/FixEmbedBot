@@ -40,7 +40,7 @@
 - Documented and ticketed Facebook support as a gated follow-up because current first-party parity requires Meta Page Public Content Access, App Review, and business verification.
 
 #### **TikTok, Tumblr, Twitch, and safer media**
-- Restored current `vt.tiktok.com` short links that redirect through TikTok's mobile video route and expanded paginated photo posts into Discord's 10-image gallery limit.
+- Restored current `vt.tiktok.com` short links that redirect through TikTok's mobile video route and split paginated photo posts across multiple Discord galleries so every source image is included.
 - Added first-party TikTok video, Tumblr post, and Twitch clip, VOD, and channel cards across automatic conversion, `/fix`, context commands, settings, status probes, and production conformance.
 - Matched TikTok and Tumblr cards to the creator-first Embedded layout with right-side avatars, direct TikTok video or slideshow media, engagement details, and Tumblr tags below galleries.
 - Restored complete Tumblr post bodies, inline links and emphasis, and high-resolution themed-blog media instead of shortened Open Graph summaries.

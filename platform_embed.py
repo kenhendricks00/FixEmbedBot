@@ -93,19 +93,23 @@ def build_platform_layout(
     fallback_image = str(payload.get("image") or "").strip()
     if not media_urls and fallback_image:
         media_urls.append(fallback_image)
-    if media_urls:
-        children.append(
-            discord.ui.MediaGallery(
-                *(
-                    discord.MediaGalleryItem(
-                        url,
-                        description=(description or title)[:1024],
-                        spoiler=preferences.content_visibility.should_spoiler(payload),
+    deduplicated_media_urls = list(dict.fromkeys(media_urls))
+    if deduplicated_media_urls:
+        spoiler = preferences.content_visibility.should_spoiler(payload)
+        for start in range(0, len(deduplicated_media_urls), 10):
+            gallery_urls = deduplicated_media_urls[start:start + 10]
+            children.append(
+                discord.ui.MediaGallery(
+                    *(
+                        discord.MediaGalleryItem(
+                            url,
+                            description=(description or title)[:1024],
+                            spoiler=spoiler,
+                        )
+                        for url in gallery_urls
                     )
-                    for url in dict.fromkeys(media_urls[:10])
                 )
             )
-        )
 
     context = str(payload.get("context") or "").strip()
     stats = format_component_stats(

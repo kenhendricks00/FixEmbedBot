@@ -89,6 +89,8 @@ type ParsedTikTokUrl = {
 
 const MAX_TIKTOK_HTML_BYTES = 1_000_000;
 const MAX_FXTIKTOK_BYTES = 256_000;
+const MAX_FXTIKTOK_GALLERY_IMAGES = 35;
+const MAX_FXTIKTOK_GALLERY_PAGES = 9;
 const TIKTOK_HOSTS = new Set([
     'tiktok.com',
     'www.tiktok.com',
@@ -429,8 +431,14 @@ async function fetchFxTikTokFallback(
         && initialImageCount > 0
         && declaredImageTotal > initialImageCount
     ) {
-        const targetImageCount = Math.min(declaredImageTotal, 10);
-        const pageCount = Math.min(3, Math.ceil(targetImageCount / initialImageCount));
+        const targetImageCount = Math.min(
+            declaredImageTotal,
+            MAX_FXTIKTOK_GALLERY_IMAGES,
+        );
+        const pageCount = Math.min(
+            MAX_FXTIKTOK_GALLERY_PAGES,
+            Math.ceil(targetImageCount / initialImageCount),
+        );
         const pageResults = await Promise.allSettled(
             Array.from(
                 { length: Math.max(0, pageCount - 1) },
@@ -464,7 +472,7 @@ async function fetchFxTikTokFallback(
                     : []),
             );
         }
-        attachments = attachments.slice(0, 10);
+        attachments = attachments.slice(0, targetImageCount);
     }
     const videoAttachment = attachments.find((attachment) => attachment.type === 'video');
     const videoUrl = trustedTikTokMedia(videoAttachment?.url);

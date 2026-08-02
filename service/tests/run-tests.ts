@@ -640,14 +640,14 @@ const tests: TestCase[] = [
                     response.data?.url,
                     'https://www.tiktok.com/@miscellaneousness0/video/7667963251073797398',
                 );
-                assert.equal(response.data?.images?.length, 10);
+                assert.equal(response.data?.images?.length, 25);
                 assert.equal(
                     response.data?.images?.[0],
                     'https://offload.tnktok.com/generate/image/7667963251073797398/1',
                 );
                 assert.equal(
-                    response.data?.images?.[9],
-                    'https://offload.tnktok.com/generate/image/7667963251073797398/10',
+                    response.data?.images?.[24],
+                    'https://offload.tnktok.com/generate/image/7667963251073797398/25',
                 );
             } finally {
                 globalThis.fetch = originalFetch;
@@ -5635,7 +5635,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v16']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v17']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

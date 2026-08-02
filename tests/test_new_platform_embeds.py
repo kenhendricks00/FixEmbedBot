@@ -90,6 +90,38 @@ class NewPlatformEmbedTests(unittest.TestCase):
         )
         self.assertTrue(gallery["items"][0]["spoiler"])
 
+    def test_tiktok_card_splits_all_images_across_multiple_galleries(self):
+        images = [
+            f"https://offload.tnktok.com/generate/image/7667963251073797398/{index}"
+            for index in range(1, 26)
+        ]
+        payload = {
+            "title": "A 25-image TikTok photo post",
+            "description": "A 25-image TikTok photo post",
+            "url": "https://www.tiktok.com/@creator/video/7667963251073797398",
+            "authorName": "Creator Name",
+            "authorHandle": "@creator",
+            "authorUrl": "https://www.tiktok.com/@creator",
+            "images": images,
+        }
+
+        container = serialized_container(build_tiktok_layout(payload))
+        galleries = [
+            component
+            for component in container["components"]
+            if "items" in component
+        ]
+
+        self.assertEqual([len(gallery["items"]) for gallery in galleries], [10, 10, 5])
+        self.assertEqual(
+            [
+                item["media"]["url"]
+                for gallery in galleries
+                for item in gallery["items"]
+            ],
+            images,
+        )
+
     def test_tumblr_card_keeps_blog_context_gallery_notes_and_timestamp(self):
         payload = {
             "title": "TitleKnown",
