@@ -2446,6 +2446,7 @@ const tests: TestCase[] = [
                 if (url.startsWith('https://old.reddit.com/')) {
                     return new Response(`
                         <meta name="description" content="# We won't support facebook any more. It's a disgusting anti-user site...">
+                        <meta property="og:image" content="https://www.redditstatic.com/new-icon.png">
                         <div class="thing link" id="thing_t3_1vgcjg5"
                             data-author="paintboth1234"
                             data-subreddit="uBlockOrigin"
@@ -2480,6 +2481,7 @@ const tests: TestCase[] = [
 
                 assert.equal(response.success, true);
                 assert.equal(response.data?.description, `# ${firstParagraph}\n\n# ${secondParagraph}`);
+                assert.equal(response.data?.image, undefined);
             } finally {
                 globalThis.fetch = originalFetch;
             }
@@ -5694,7 +5696,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v18']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v19']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

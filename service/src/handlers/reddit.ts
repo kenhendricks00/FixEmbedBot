@@ -215,6 +215,18 @@ function directRedditImageUrl(value: string): string | undefined {
     return destination.toString();
 }
 
+function redditCrawlerPreviewUrl(value: string, base: string): string | undefined {
+    const destination = publicHttpsUrl(value, base);
+    if (!destination) return undefined;
+
+    const hostname = destination.hostname.toLowerCase().replace(/^www\./, '');
+    const pathname = destination.pathname.toLowerCase();
+    const genericRedditArtwork = hostname === 'redditstatic.com'
+        && (pathname === '/new-icon.png'
+            || pathname === '/desktop2x/img/favicon/android-icon-192x192.png');
+    return genericRedditArtwork ? undefined : destination.toString();
+}
+
 function linkedArticleSection(value: string | undefined) {
     if (!value) return undefined;
     const destination = new URL(value);
@@ -585,7 +597,7 @@ async function recoverFromRedditCrawlerPage(
     );
     const fallbackImage = articleMetaContent(html, 'og:image');
     const thumbnail = fallbackImage
-        ? publicHttpsUrl(fallbackImage, pageUrl)?.toString()
+        ? redditCrawlerPreviewUrl(fallbackImage, pageUrl)
         : undefined;
     const hasVideoPlayer = /<div\b(?=[^>]*\bdata-mpd-url=["'])[^>]*>/i.test(postHtml);
     const video = hasVideoPlayer
