@@ -2391,6 +2391,9 @@ const tests: TestCase[] = [
                         </a>
                         <a href="https://www.reddit.com/user/Distinct_Ingenuity21/">author</a>
                         <shreddit-embed-title>usage limits reset for the 5th time today</shreddit-embed-title>
+                        <div id="t3_1utc8qv-post-rtjson-content" class="md">
+                            <p>The complete post body isn't lost.</p>
+                        </div>
                         <img src="https://preview.redd.it/example.png?width=591&amp;format=png">
                         <div data-testid="upvote"><faceplate-number number="218" pretty></faceplate-number></div>
                         <span>View 75 comments</span>
@@ -2416,11 +2419,67 @@ const tests: TestCase[] = [
                 assert.equal(response.source, 'first-party');
                 assert.equal(response.data?.title, 'r/codex • usage limits reset for the 5th time today');
                 assert.equal(response.data?.authorName, 'u/Distinct_Ingenuity21');
+                assert.equal(response.data?.description, "The complete post body isn't lost.");
                 assert.equal(response.data?.authorAvatar, 'https://styles.redditmedia.com/t5_2t1qf/styles/communityIcon_fp81a2t5s9ch1.png?width=256&s=signed');
                 assert.equal(response.data?.image, 'https://preview.redd.it/example.png?width=591&format=png');
                 assert.match(response.data?.stats || '', /218/);
                 assert.match(response.data?.stats || '', /75/);
                 assert.equal(response.data?.timestamp, '2026-07-13T00:00:00.000Z');
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
+        name: 'redditHandler preserves complete self-post text with apostrophes from crawler HTML',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            const postUrl = 'https://www.reddit.com/r/uBlockOrigin/comments/1vgcjg5/about_disgusting_facebook_devs/';
+            const firstParagraph = "We won't support facebook any more. It's a disgusting anti-user site. All it does is watching open-source projects doing everything in public and counter them to deliver the malicious ads. Yep, the devs that receive 7-figure dollar salary is just doing this.";
+            const secondParagraph = 'Users should give the most harsh feedbacks to them. Being submitted to them and keep going to the site and support it is the worst thing you can do.';
+
+            globalThis.fetch = async (input) => {
+                const url = String(input);
+                if (url.includes('/comments/') && url.includes('.json')) {
+                    return new Response('blocked', { status: 403, statusText: 'Forbidden' });
+                }
+                if (url.startsWith('https://old.reddit.com/')) {
+                    return new Response(`
+                        <meta name="description" content="# We won't support facebook any more. It's a disgusting anti-user site...">
+                        <div class="thing link" id="thing_t3_1vgcjg5"
+                            data-author="paintboth1234"
+                            data-subreddit="uBlockOrigin"
+                            data-timestamp="1785947893000"
+                            data-url="${postUrl}"
+                            data-permalink="/r/uBlockOrigin/comments/1vgcjg5/about_disgusting_facebook_devs/"
+                            data-comments-count="119"
+                            data-score="1150"
+                            data-nsfw="false">
+                            <a class="title may-blank" href="${postUrl}">About disgusting Facebook devs</a>
+                            <div class="usertext-body may-blank-within md-container">
+                                <div class="md">
+                                    <h1>${firstParagraph.replaceAll("'", '&#39;')}</h1>
+                                    <h1>${secondParagraph}</h1>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="child"></div>
+                    `, { status: 200, headers: { 'Content-Type': 'text/html' } });
+                }
+                if (url === 'https://api.reddit.com/r/uBlockOrigin/about?raw_json=1') {
+                    return new Response(JSON.stringify({ data: {} }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                throw new Error(`Unexpected request: ${url}`);
+            };
+
+            try {
+                const response = await redditHandler.handle(postUrl, env);
+
+                assert.equal(response.success, true);
+                assert.equal(response.data?.description, `# ${firstParagraph}\n\n# ${secondParagraph}`);
             } finally {
                 globalThis.fetch = originalFetch;
             }
@@ -2605,7 +2664,7 @@ const tests: TestCase[] = [
             const postPath = '/r/DinoCrisis/comments/1uxuf14/check_out_this_hidden_gem_ive_been_wishlisting/';
             const canonicalUrl = `https://www.reddit.com${postPath}`;
             const fullTitle = 'Check out this hidden gem Ive been wishlisting for years im so hyped for it , dino crisis vibes are all over the place here!';
-            const fullDescription = 'Check out the trailer for this one it looks so jolly good ! [https://www.youtube.com/watch?v=ZbhdQdJX4u8](https://www.youtube.com/watch?v=ZbhdQdJX4u8)';
+            const fullDescription = "Check out the trailer; it's jolly good! [https://www.youtube.com/watch?v=ZbhdQdJX4u8](https://www.youtube.com/watch?v=ZbhdQdJX4u8)";
             const galleryImages = [
                 'https://preview.redd.it/g7v6v7j29jdh1.png?width=960&format=png&auto=webp&s=first',
                 'https://preview.redd.it/7lyytbj29jdh1.png?width=960&format=png&auto=webp&s=second',
@@ -5635,7 +5694,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v17']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v18']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

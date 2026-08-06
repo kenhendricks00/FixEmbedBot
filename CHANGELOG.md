@@ -13,6 +13,7 @@
 
 #### **Reddit link cards**
 - Expanded Reddit link posts with their linked article, preview image, subreddit identity, publication time, upvotes, and comments.
+- Restored complete Reddit self-post bodies when the JSON API is blocked, including text after apostrophes and the source paragraph and heading structure.
 - Corrected subreddit avatars to use Reddit's community icon instead of unrelated legacy header artwork.
 - Restored image posts by preferring Reddit's direct media files over crawler thumbnails that Discord cannot load.
 - Restored playable Reddit videos with audio when the JSON API is blocked by preferring Reddit's signed, muxed packaged media and falling back to bounded DASH recovery instead of rendering only the poster image.

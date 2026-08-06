@@ -249,12 +249,14 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
 }
 
 function articleMetaContent(html: string, key: string): string | undefined {
-    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const patterns = [
-        new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escaped}["'][^>]*>`, 'i'),
-    ];
-    return patterns.map((pattern) => html.match(pattern)?.[1]).find(Boolean);
+    for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+        const tag = match[0];
+        const metaKey = htmlAttribute(tag, 'property') || htmlAttribute(tag, 'name');
+        if (metaKey.toLowerCase() === key.toLowerCase()) {
+            return htmlAttribute(tag, 'content') || undefined;
+        }
+    }
+    return undefined;
 }
 
 async function fetchArticleImage(articleUrl: string | undefined): Promise<string | undefined> {
@@ -279,9 +281,42 @@ async function fetchArticleImage(articleUrl: string | undefined): Promise<string
 
 function htmlAttribute(tag: string, name: string): string {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return decodeRedditHtml(
-        tag.match(new RegExp(`\\b${escaped}=["']([^"']*)["']`, 'i'))?.[1] || '',
+    const match = tag.match(
+        new RegExp(`\\b${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'),
     );
+    return decodeRedditHtml(
+        match?.[1] ?? match?.[2] ?? '',
+    );
+}
+
+function redditPostBodyFromHtml(html: string, postId?: string): string {
+    const escapedPostId = postId?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const body = escapedPostId
+        ? html.match(
+            new RegExp(
+                `<div\\b(?=[^>]*\\bid=["']t3_${escapedPostId}-post-rtjson-content["'])[^>]*>([\\s\\S]*?)<\\/div>`,
+                'i',
+            ),
+        )?.[1]
+        : html.match(
+            /<div\b(?=[^>]*\bclass=["'][^"']*\bmd\b[^"']*["'])[^>]*>([\s\S]*?)<\/div>/i,
+        )?.[1];
+    if (!body) return '';
+
+    return decodeRedditHtml(
+        body
+            .replace(/<h([1-6])\b[^>]*>/gi, (_, level: string) => `${'#'.repeat(Number(level))} `)
+            .replace(/<\/(?:h[1-6]|p|blockquote|pre)>/gi, '\n\n')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<li\b[^>]*>/gi, '- ')
+            .replace(/<\/li>/gi, '\n')
+            .replace(/<[^>]+>/g, ''),
+    )
+        .replace(/\u00a0/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n[ \t]+/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 async function redditVideoFromHtml(
@@ -544,8 +579,9 @@ async function recoverFromRedditCrawlerPage(
     );
     const images = hasPostBoundary ? redditGalleryImagesFromHtml(postHtml) : [];
     const description = truncateText(
-        decodeRedditHtml(articleMetaContent(html, 'description') || ''),
-        1200,
+        redditPostBodyFromHtml(postHtml)
+            || decodeRedditHtml(articleMetaContent(html, 'description') || ''),
+        3000,
     );
     const fallbackImage = articleMetaContent(html, 'og:image');
     const thumbnail = fallbackImage
@@ -641,6 +677,10 @@ async function recoverFromRedditEmbed(
                 const score = Number(html.match(/data-testid="upvote"[\s\S]{0,1000}?<faceplate-number\s+number="(\d+)"/i)?.[1]) || undefined;
                 const comments = Number(html.match(/View\s+([\d,]+)\s+comments?/i)?.[1].replace(/,/g, '')) || undefined;
                 const cleanTitle = decodeRedditHtml(title.replace(/<[^>]+>/g, ''));
+                const description = truncateText(
+                    redditPostBodyFromHtml(html, safeDecodeURIComponent(postId)),
+                    3000,
+                );
                 const displayAuthor = author ? safeDecodeURIComponent(author) : undefined;
                 const authorAvatar = await fetchSubredditIcon(
                     displaySubreddit,
@@ -662,7 +702,7 @@ async function recoverFromRedditEmbed(
                     source: 'first-party',
                     data: {
                         title: `r/${displaySubreddit} • ${cleanTitle}`,
-                        description: '',
+                        description,
                         url: canonicalUrl,
                         siteName: getBrandedSiteName('reddit'),
                         authorName: displayAuthor ? `u/${displayAuthor}` : undefined,
@@ -800,7 +840,7 @@ export const redditHandler: PlatformHandler = {
             const post = response[0].data.children[0].data;
 
             // Build description (no stats here - moved to oEmbed row)
-            const description = post.selftext ? truncateText(post.selftext, 1200) : '';
+            const description = post.selftext ? truncateText(post.selftext, 3000) : '';
 
             // Format stats for oEmbed row (consistent with Twitter/Threads/Bluesky)
             const stats = formatStats({
