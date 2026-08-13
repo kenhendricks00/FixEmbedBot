@@ -47,9 +47,16 @@ const GRAPHQL_FEATURES = {
     tweet_awards_web_tipping_enabled: false,
 };
 
+export interface TwitterUrlEntity {
+    url: string;
+    expanded_url?: string;
+    display_url?: string;
+}
+
 export interface TwitterMedia {
     type: 'photo' | 'video' | 'animated_gif';
     media_url_https: string;
+    url?: string;
     video_info?: {
         aspect_ratio?: [number, number];
         variants: Array<{ bitrate?: number; content_type: string; url: string }>;
@@ -68,6 +75,7 @@ export interface TwitterQuote {
     text?: string;
     user?: TwitterTweetData['user'];
     mediaDetails?: TwitterMedia[];
+    entities?: { media?: TwitterMedia[]; urls?: TwitterUrlEntity[] };
     unavailableReason?: string;
 }
 
@@ -92,7 +100,7 @@ export interface TwitterTweetData {
     video?: { viewCount: string };
     lang?: string;
     possibly_sensitive?: boolean;
-    entities?: { media?: TwitterMedia[] };
+    entities?: { media?: TwitterMedia[]; urls?: TwitterUrlEntity[] };
     extended_entities?: { media?: TwitterMedia[] };
     mediaDetails?: TwitterMedia[];
     poll?: TwitterPoll;
@@ -122,6 +130,19 @@ function normalizeMedia(value: unknown): TwitterMedia[] {
             return [];
         }
         return [media as unknown as TwitterMedia];
+    });
+}
+
+function normalizeUrlEntities(value: unknown): TwitterUrlEntity[] {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 20).flatMap((item) => {
+        const entity = record(item);
+        if (typeof entity.url !== 'string') return [];
+        return [{
+            url: entity.url,
+            expanded_url: typeof entity.expanded_url === 'string' ? entity.expanded_url : undefined,
+            display_url: typeof entity.display_url === 'string' ? entity.display_url : undefined,
+        }];
     });
 }
 
@@ -228,13 +249,24 @@ function normalizeQuote(value: unknown): TwitterQuote | undefined {
     const user = normalizeUser(quote);
     const legacy = record(quote.legacy);
     if (!user || typeof legacy.full_text !== 'string') return { unavailableReason: 'Unavailable' };
+    const noteResult = record(quote.note_tweet?.note_tweet_results?.result);
+    const noteText = noteResult.text;
+    const textEntities = record(
+        typeof noteText === 'string'
+            ? noteResult.entity_set ?? noteResult.entities
+            : legacy.entities,
+    );
     return {
         id_str: String(quote.rest_id ?? legacy.id_str ?? ''),
         text: decodeHtmlEntities(
-            quote.note_tweet?.note_tweet_results?.result?.text ?? legacy.full_text,
+            typeof noteText === 'string' ? noteText : legacy.full_text,
         ),
         user,
         mediaDetails: normalizeMedia(legacy.extended_entities?.media ?? legacy.entities?.media),
+        entities: {
+            urls: normalizeUrlEntities(textEntities.urls),
+            media: normalizeMedia(legacy.entities?.media),
+        },
     };
 }
 
@@ -246,7 +278,13 @@ export function normalizeGraphQLTweet(value: unknown): TwitterTweetData | null {
     const id = node.rest_id ?? legacy.id_str;
     if (!user || typeof id !== 'string' || typeof legacy.full_text !== 'string') return null;
 
-    const noteText = node.note_tweet?.note_tweet_results?.result?.text;
+    const noteResult = record(node.note_tweet?.note_tweet_results?.result);
+    const noteText = noteResult.text;
+    const textEntities = record(
+        typeof noteText === 'string'
+            ? noteResult.entity_set ?? noteResult.entities
+            : legacy.entities,
+    );
     const article = record(node.article?.article_results?.result);
     const coverInfo = record(article.cover_media?.media_info);
     const birdwatch = record(node.birdwatch_pivot);
@@ -265,6 +303,10 @@ export function normalizeGraphQLTweet(value: unknown): TwitterTweetData | null {
         view_count_info: node.views?.count ? { count: String(node.views.count) } : undefined,
         lang: typeof legacy.lang === 'string' ? legacy.lang : undefined,
         possibly_sensitive: legacy.possibly_sensitive === true,
+        entities: {
+            urls: normalizeUrlEntities(textEntities.urls),
+            media: normalizeMedia(legacy.entities?.media),
+        },
         mediaDetails: normalizeMedia(legacy.extended_entities?.media ?? legacy.entities?.media),
         poll: normalizeTwitterPoll(node.card),
         quote: node.quoted_status_result || node.quoted_tweet_results

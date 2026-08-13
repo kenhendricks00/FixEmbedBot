@@ -20,6 +20,7 @@ import {
     normalizeTwitterPoll,
     type TwitterMedia as SyndicationMedia,
     type TwitterTweetData as SyndicationTweet,
+    type TwitterUrlEntity,
 } from './twitter_graphql.ts';
 
 function fallbackResponse(username: string, tweetId: string, error: string): HandlerResponse {
@@ -185,6 +186,37 @@ function animatedGifUrl(mediaUrl: string): string {
     } catch {
         return mediaUrl;
     }
+}
+
+function twitterTextWithExpandedLinks(
+    text: string,
+    entities?: { media?: SyndicationMedia[]; urls?: TwitterUrlEntity[] },
+): string {
+    let rendered = text;
+    for (const entity of entities?.urls || []) {
+        const shortUrl = entity.url.trim();
+        const expandedUrl = entity.expanded_url?.trim();
+        if (!shortUrl || !expandedUrl) continue;
+        try {
+            const destination = new URL(expandedUrl);
+            if (!['http:', 'https:'].includes(destination.protocol)) continue;
+            const label = (entity.display_url?.trim() || destination.hostname)
+                .replace(/([\\[\]])/g, '\\$1');
+            const safeDestination = destination.toString()
+                .replace(/\(/g, '%28')
+                .replace(/\)/g, '%29');
+            rendered = rendered.replaceAll(shortUrl, `[${label}](${safeDestination})`);
+        } catch {
+            // Leave malformed URL entities for the final t.co cleanup below.
+        }
+    }
+    for (const media of entities?.media || []) {
+        if (media.url) rendered = rendered.replaceAll(media.url, '');
+    }
+    return rendered
+        .replace(/https?:\/\/t\.co\/\w+/g, '')
+        .replace(/[ \t]+\n/g, '\n')
+        .trim();
 }
 
 function fxTwitterMedia(tweet: FxTwitterTweet): {
@@ -420,7 +452,7 @@ export const twitterHandler: PlatformHandler = {
 
             const handle = tweet.user.screen_name;
             const description = truncateText(
-                tweet.text.replace(/https?:\/\/t\.co\/\w+/g, '').trim(),
+                twitterTextWithExpandedLinks(tweet.text, tweet.entities),
                 3000,
             );
             const media = tweet.mediaDetails || tweet.extended_entities?.media || tweet.entities?.media || [];
@@ -473,7 +505,10 @@ export const twitterHandler: PlatformHandler = {
                         kind: 'quote',
                         title: 'Quoted post',
                         body: truncateText(
-                            tweet.quote.text.replace(/https?:\/\/t\.co\/\w+/g, '').trim(),
+                            twitterTextWithExpandedLinks(
+                                tweet.quote.text,
+                                tweet.quote.entities,
+                            ),
                             900,
                         ),
                         url: tweet.quote.id_str

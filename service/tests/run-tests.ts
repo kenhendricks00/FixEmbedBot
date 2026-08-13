@@ -4466,6 +4466,67 @@ const tests: TestCase[] = [
         },
     },
     {
+        name: 'twitterHandler preserves expanded source links while removing media URLs',
+        run: async () => {
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async () => new Response(JSON.stringify({
+                __typename: 'Tweet',
+                id_str: '2086838198622195759',
+                text: [
+                    'Roku has started a 24/7 channel that plays AI slop movies.',
+                    '',
+                    'The channel also runs AI generated ads from various companies.',
+                    '',
+                    '(Source: https://t.co/DtuBEzSwp0) https://t.co/zH5NE6W17e',
+                ].join('\n'),
+                user: {
+                    name: 'DiscussingFilm',
+                    screen_name: 'DiscussingFilm',
+                    profile_image_url_https: 'https://pbs.twimg.com/profile_images/discussingfilm.jpg',
+                },
+                created_at: '2026-08-10T15:32:52.000Z',
+                entities: {
+                    urls: [{
+                        url: 'https://t.co/DtuBEzSwp0',
+                        expanded_url: 'https://www.yahoo.com/entertainment/tv/articles/roku-unleashes-24-7-ai-195025392.html',
+                        display_url: 'yahoo.com/entertainment/\u2026',
+                    }],
+                    media: [{
+                        type: 'photo',
+                        media_url_https: 'https://pbs.twimg.com/media/HPXwSBvWkAApETz.jpg',
+                        url: 'https://t.co/zH5NE6W17e',
+                    }],
+                },
+                mediaDetails: [{
+                    type: 'photo',
+                    media_url_https: 'https://pbs.twimg.com/media/HPXwSBvWkAApETz.jpg',
+                    url: 'https://t.co/zH5NE6W17e',
+                }],
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+            try {
+                const response = await twitterHandler.handle(
+                    'https://x.com/DiscussingFilm/status/2086838198622195759',
+                    env,
+                );
+
+                assert.equal(
+                    response.data?.description,
+                    [
+                        'Roku has started a 24/7 channel that plays AI slop movies.',
+                        '',
+                        'The channel also runs AI generated ads from various companies.',
+                        '',
+                        '(Source: [yahoo.com/entertainment/\u2026](https://www.yahoo.com/entertainment/tv/articles/roku-unleashes-24-7-ai-195025392.html))',
+                    ].join('\n'),
+                );
+                assert.doesNotMatch(response.data?.description || '', /t\.co/);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        },
+    },
+    {
         name: 'twitterHandler uses Grok translation without dropping emoji URLs or quote context',
         run: async () => {
             const originalFetch = globalThis.fetch;
@@ -4744,6 +4805,11 @@ const tests: TestCase[] = [
                     id_str: '2078923298616836503',
                     full_text: 'Wait &amp; see what happens',
                     created_at: 'Sun Jul 19 00:00:00 +0000 2026',
+                    entities: { urls: [{
+                        url: 'https://t.co/source123',
+                        expanded_url: 'https://example.com/report',
+                        display_url: 'example.com/report',
+                    }] },
                 },
                 quoted_status_result: { result: {
                     __typename: 'Tweet',
@@ -4760,6 +4826,11 @@ const tests: TestCase[] = [
             });
 
             assert.equal(normalized?.text, 'Wait & see what happens');
+            assert.deepEqual(normalized?.entities?.urls, [{
+                url: 'https://t.co/source123',
+                expanded_url: 'https://example.com/report',
+                display_url: 'example.com/report',
+            }]);
             assert.equal(
                 normalized?.quote?.text,
                 'Leaked bodycam footage of Andrew Tate & Tristan Tate\u2019s arrest shows Duel owner Monarch and Freakbob \ud83d\udc40',
@@ -5696,7 +5767,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v19']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v20']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'
