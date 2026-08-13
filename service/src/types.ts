@@ -60,6 +60,8 @@ export interface EmbedData {
     image?: string;
     images?: string[];  // For carousel/multiple images
     video?: VideoEmbed;
+    /** Source-authored alt text aligned with rendered video/image order. */
+    mediaDescriptions?: string[];
 
     // Metadata
     color?: string;
@@ -100,6 +102,7 @@ export interface EmbedSection {
     authorVerification?: XVerificationBadge;
     images?: string[];
     video?: VideoEmbed;
+    mediaDescriptions?: string[];
 }
 
 export interface VideoEmbed {

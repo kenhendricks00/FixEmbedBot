@@ -76,6 +76,32 @@ def _media_urls(data: Mapping[str, Any]) -> list[tuple[str, Optional[str]]]:
     return media[:10]
 
 
+def _media_description(
+    data: Mapping[str, Any],
+    index: int,
+    media_type: Optional[str],
+    author_name: str,
+    total: int,
+    *,
+    include_platform: bool,
+) -> str:
+    """Prefer source-authored alt text, then use a concise honest label."""
+    descriptions = data.get("mediaDescriptions")
+    if isinstance(descriptions, list) and index < len(descriptions):
+        source_description = str(descriptions[index] or "").strip()
+        if source_description:
+            return source_description[:1024]
+
+    if media_type == "gif":
+        media_label = "Animated GIF"
+    elif media_type == "video":
+        media_label = "X video" if include_platform else "Video"
+    else:
+        media_label = "X image" if include_platform else "Image"
+    position = f" {index + 1} of {total}" if include_platform and total > 1 else ""
+    return f"{media_label}{position} from {author_name}"[:1024]
+
+
 def _quote_section_items(
     section: Mapping[str, Any],
     preferences: CardPreferences,
@@ -126,19 +152,23 @@ def _quote_section_items(
 
     media = _media_urls(section)
     if media:
+        total_media = len(media)
         items.append(
             discord.ui.MediaGallery(
                 *(
                     discord.MediaGalleryItem(
                         url,
-                        description=(
-                            f"Animated GIF from {name}"
-                            if media_type == "gif"
-                            else f"Media from {name}"
+                        description=_media_description(
+                            section,
+                            index,
+                            media_type,
+                            name,
+                            total_media,
+                            include_platform=False,
                         ),
                         spoiler=preferences.content_visibility.should_spoiler(section),
                     )
-                    for url, media_type in media
+                    for index, (url, media_type) in enumerate(media)
                 )
             )
         )
@@ -190,16 +220,23 @@ def build_twitter_layout(
     media = [] if payload.get("mediaOrigin") == "quote" else _media_urls(payload)
 
     if media:
-        media_description = description[:1024] or None
+        total_media = len(media)
         children.append(
             discord.ui.MediaGallery(
                 *(
                     discord.MediaGalleryItem(
                         url,
-                        description=media_description,
+                        description=_media_description(
+                            payload,
+                            index,
+                            media_type,
+                            name,
+                            total_media,
+                            include_platform=True,
+                        ),
                         spoiler=preferences.content_visibility.should_spoiler(payload),
                     )
-                    for url, _media_type in media
+                    for index, (url, media_type) in enumerate(media)
                 )
             )
         )

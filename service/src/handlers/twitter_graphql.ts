@@ -57,6 +57,7 @@ export interface TwitterMedia {
     type: 'photo' | 'video' | 'animated_gif';
     media_url_https: string;
     url?: string;
+    ext_alt_text?: string;
     video_info?: {
         aspect_ratio?: [number, number];
         variants: Array<{ bitrate?: number; content_type: string; url: string }>;

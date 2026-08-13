@@ -4442,9 +4442,20 @@ const tests: TestCase[] = [
                 },
                 created_at: '2024-10-22T00:00:00.000Z',
                 mediaDetails: [
-                    { type: 'photo', media_url_https: 'https://pbs.twimg.com/media/one.jpg' },
-                    { type: 'photo', media_url_https: 'https://pbs.twimg.com/media/two.jpg' },
-                    { type: 'photo', media_url_https: 'https://pbs.twimg.com/media/three.jpg' },
+                    {
+                        type: 'photo',
+                        media_url_https: 'https://pbs.twimg.com/media/one.jpg',
+                        ext_alt_text: 'The first stage on the launch pad at sunrise.',
+                    },
+                    {
+                        type: 'photo',
+                        media_url_https: 'https://pbs.twimg.com/media/two.jpg',
+                        ext_alt_text: 'The rocket lifting off above the tower.',
+                    },
+                    {
+                        type: 'photo',
+                        media_url_https: 'https://pbs.twimg.com/media/three.jpg',
+                    },
                 ],
             }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
@@ -4458,6 +4469,11 @@ const tests: TestCase[] = [
                     'https://pbs.twimg.com/media/one.jpg',
                     'https://pbs.twimg.com/media/two.jpg',
                     'https://pbs.twimg.com/media/three.jpg',
+                ]);
+                assert.deepEqual(response.data?.mediaDescriptions, [
+                    'The first stage on the launch pad at sunrise.',
+                    'The rocket lifting off above the tower.',
+                    '',
                 ]);
                 assert.equal(response.data?.image, undefined);
             } finally {
@@ -4870,7 +4886,11 @@ const tests: TestCase[] = [
                                         lang: 'en',
                                         entities: { urls: [], media: [] },
                                         extended_entities: { media: [
-                                            { type: 'photo', media_url_https: 'https://pbs.twimg.com/media/root-one.jpg' },
+                                            {
+                                                type: 'photo',
+                                                media_url_https: 'https://pbs.twimg.com/media/root-one.jpg',
+                                                ext_alt_text: 'The first image described by its author.',
+                                            },
                                             { type: 'photo', media_url_https: 'https://pbs.twimg.com/media/root-two.jpg' },
                                         ] },
                                     },
@@ -4903,6 +4923,7 @@ const tests: TestCase[] = [
                                             extended_entities: { media: [{
                                                 type: 'animated_gif',
                                                 media_url_https: 'https://pbs.twimg.com/media/quoted-gif.jpg',
+                                                ext_alt_text: 'A looping animation from the quoted post.',
                                                 video_info: {
                                                     aspect_ratio: [1, 1],
                                                     variants: [{
@@ -4947,6 +4968,10 @@ const tests: TestCase[] = [
                     'https://pbs.twimg.com/media/root-one.jpg',
                     'https://pbs.twimg.com/media/root-two.jpg',
                 ]);
+                assert.deepEqual(response.data?.mediaDescriptions, [
+                    'The first image described by its author.',
+                    '',
+                ]);
                 assert.equal(response.data?.authorVerification, 'organization');
                 assert.deepEqual(response.data?.sections?.map((section) => section.kind), [
                     'poll', 'quote', 'community-note', 'article',
@@ -4970,6 +4995,7 @@ const tests: TestCase[] = [
                         thumbnail: 'https://pbs.twimg.com/media/quoted-gif.jpg',
                         mediaType: 'gif',
                     },
+                    mediaDescriptions: ['A looping animation from the quoted post.'],
                 });
                 assert.match(response.data?.stats || '', /20/);
                 assert.doesNotMatch(response.data?.stats || '', /25/);
@@ -5767,7 +5793,7 @@ const tests: TestCase[] = [
                 assert.equal(requestsAfterHit, requestsAfterFirst);
                 assert.ok(upstreamRequests > requestsAfterHit + 1);
                 assert.equal(cacheKeys.length, 3);
-                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v20']);
+                assert.deepEqual(Array.from(new Set(cacheNames)), ['fixembed-embed-api-v21']);
                 assert.equal(
                     Array.from(entries.values()).every((entry) => (
                         entry.headers.get('Cache-Control') === 'public, max-age=0, s-maxage=300'

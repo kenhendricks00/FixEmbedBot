@@ -98,6 +98,52 @@ class TwitterEmbedTests(unittest.TestCase):
         self.assertNotIn("FixEmbed link", footer["content"])
         self.assertIn("<t:1783614000:R>", footer["content"])
 
+    def test_components_v2_media_alt_text_does_not_repeat_the_post_description(self):
+        payload = {
+            "description": (
+                "Roku has started a 24/7 channel that plays AI slop movies.\n\n"
+                "The channel also runs AI generated ads from various companies.\n\n"
+                "(Source: [yahoo.com/entertainment/…](https://www.yahoo.com/"
+                "entertainment/tv/articles/roku-unleashes-24-7-ai-195025392.html))"
+            ),
+            "authorName": "DiscussingFilm",
+            "image": "https://pbs.twimg.com/media/HPXwSBvWkAApETz.jpg",
+        }
+
+        container = build_twitter_layout(payload).to_components()[0]
+        gallery = container["components"][1]
+
+        self.assertEqual(
+            gallery["items"][0]["description"],
+            "X image from DiscussingFilm",
+        )
+        self.assertNotIn(
+            "Roku has started",
+            gallery["items"][0]["description"],
+        )
+
+    def test_components_v2_prefers_source_authored_media_alt_text(self):
+        payload = {
+            "description": "Launch photos from today.",
+            "authorName": "SpaceX",
+            "images": [
+                "https://pbs.twimg.com/media/one.jpg",
+                "https://pbs.twimg.com/media/two.jpg",
+            ],
+            "mediaDescriptions": [
+                "A rocket standing on the launch pad at sunrise.",
+                "The rocket lifting off above a cloud of exhaust.",
+            ],
+        }
+
+        container = build_twitter_layout(payload).to_components()[0]
+        gallery = container["components"][1]
+
+        self.assertEqual(
+            [item["description"] for item in gallery["items"]],
+            payload["mediaDescriptions"],
+        )
+
     def test_components_v2_layout_preserves_photo_carousel_and_structured_sections(self):
         payload = {
             "description": "Flight hardware moved to the pad.",

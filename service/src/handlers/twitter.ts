@@ -38,6 +38,8 @@ interface FxTwitterMedia {
     thumbnail_url?: string;
     width?: number;
     height?: number;
+    altText?: string;
+    alt_text?: string;
 }
 
 interface FxTwitterPoll {
@@ -219,15 +221,36 @@ function twitterTextWithExpandedLinks(
         .trim();
 }
 
+function sourceMediaDescription(media?: {
+    ext_alt_text?: string;
+    altText?: string;
+    alt_text?: string;
+}): string {
+    return truncateText(
+        media?.ext_alt_text?.trim()
+        || media?.altText?.trim()
+        || media?.alt_text?.trim()
+        || '',
+        1024,
+    );
+}
+
+function boundedMediaDescriptions(values: string[]): string[] | undefined {
+    return values.some(Boolean) ? values : undefined;
+}
+
 function fxTwitterMedia(tweet: FxTwitterTweet): {
     image?: string;
     images?: string[];
     video?: VideoEmbed;
+    mediaDescriptions?: string[];
 } {
     const allMedia = tweet.media?.all || [];
-    const photos = (tweet.media?.photos || allMedia.filter((item) => item.type === 'photo'))
-        .map((item) => item.url)
-        .filter((url): url is string => typeof url === 'string' && Boolean(url));
+    const photoMedia = (tweet.media?.photos || allMedia.filter((item) => item.type === 'photo'))
+        .filter((item): item is FxTwitterMedia & { url: string } => (
+            typeof item.url === 'string' && Boolean(item.url)
+        ));
+    const photos = photoMedia.map((item) => item.url);
     const firstVideo = (
         tweet.media?.videos
         || allMedia.filter((item) => ['video', 'gif', 'animated_gif'].includes(item.type || ''))
@@ -242,11 +265,16 @@ function fxTwitterMedia(tweet: FxTwitterTweet): {
             mediaType: isGif ? 'gif' as const : 'video' as const,
         }
         : undefined;
+    const mediaDescriptions = boundedMediaDescriptions([
+        ...(video ? [sourceMediaDescription(firstVideo)] : []),
+        ...photoMedia.slice(0, 4).map(sourceMediaDescription),
+    ]);
 
     return {
         image: photos.length === 1 && !video ? photos[0] : undefined,
         images: photos.length > 1 || (photos.length === 1 && video) ? photos.slice(0, 4) : undefined,
         video,
+        ...(mediaDescriptions ? { mediaDescriptions } : {}),
     };
 }
 
@@ -278,6 +306,9 @@ function fxTwitterQuoteSection(
         authorVerification: twitterVerificationBadge(author),
         images: quoteMedia.images || (quoteMedia.image ? [quoteMedia.image] : undefined),
         video: quoteMedia.video,
+        ...(quoteMedia.mediaDescriptions
+            ? { mediaDescriptions: quoteMedia.mediaDescriptions }
+            : {}),
     };
 }
 
@@ -338,12 +369,14 @@ async function fetchFxTwitterFallback(
         let image = media.image;
         let images = media.images;
         let video = media.video;
+        let mediaDescriptions = media.mediaDescriptions;
         let mediaOrigin: 'quote' | undefined;
         if (!image && !images && !video && quoteSection) {
             video = quoteSection.video;
             if (quoteSection.images?.length === 1 && !video) [image] = quoteSection.images;
             else if (quoteSection.images?.length) images = quoteSection.images;
             if (image || images || video) mediaOrigin = 'quote';
+            if (mediaOrigin) mediaDescriptions = quoteSection.mediaDescriptions;
         }
 
         return {
@@ -362,6 +395,7 @@ async function fetchFxTwitterFallback(
                 image: image || video?.thumbnail,
                 images,
                 video,
+                ...(mediaDescriptions ? { mediaDescriptions } : {}),
                 color: platformColors.twitter,
                 platform: 'twitter',
                 sourceLanguage: translationSource?.sourceLanguage,
@@ -456,13 +490,16 @@ export const twitterHandler: PlatformHandler = {
                 3000,
             );
             const media = tweet.mediaDetails || tweet.extended_entities?.media || tweet.entities?.media || [];
-            const photos = media
-                .filter((item) => item.type === 'photo')
-                .map((item) => item.media_url_https);
+            const photoMedia = media.filter((item) => item.type === 'photo');
+            const photos = photoMedia.map((item) => item.media_url_https);
             const firstVideo = media.find((item) => item.type !== 'photo');
             let image: string | undefined;
             let images: string[] | undefined;
             let video: VideoEmbed | undefined;
+            let mediaDescriptions = boundedMediaDescriptions([
+                ...(firstVideo ? [sourceMediaDescription(firstVideo)] : []),
+                ...photoMedia.map(sourceMediaDescription),
+            ]);
             let mediaOrigin: 'quote' | undefined;
 
             if (photos.length === 1 && !firstVideo) {
@@ -501,6 +538,16 @@ export const twitterHandler: PlatformHandler = {
                     const quoteVideo = twitterVideoEmbed(
                         quoteMedia.find((item) => item.type !== 'photo'),
                     );
+                    const quoteMediaDescriptions = boundedMediaDescriptions([
+                        ...(quoteVideo
+                            ? [sourceMediaDescription(
+                                quoteMedia.find((item) => item.type !== 'photo'),
+                            )]
+                            : []),
+                        ...quoteMedia
+                            .filter((item) => item.type === 'photo')
+                            .map(sourceMediaDescription),
+                    ]);
                     sections?.push({
                         kind: 'quote',
                         title: 'Quoted post',
@@ -523,6 +570,7 @@ export const twitterHandler: PlatformHandler = {
                         authorVerification: twitterVerificationBadge(tweet.quote.user),
                         images: quotePhotos.length ? quotePhotos : undefined,
                         video: quoteVideo,
+                        ...(quoteMediaDescriptions ? { mediaDescriptions: quoteMediaDescriptions } : {}),
                     });
                 } else {
                     sections?.push({
@@ -587,6 +635,7 @@ export const twitterHandler: PlatformHandler = {
                 if (quoteSection.images?.length === 1 && !video) [image] = quoteSection.images;
                 else if (quoteSection.images?.length) images = quoteSection.images;
                 if (image || images || video) mediaOrigin = 'quote';
+                if (mediaOrigin) mediaDescriptions = quoteSection.mediaDescriptions;
             }
             const translationSource = primaryTranslation || quoteTranslation;
             const translation = requestedLanguage && translationSource
@@ -616,6 +665,7 @@ export const twitterHandler: PlatformHandler = {
                     image,
                     images,
                     video,
+                    ...(mediaDescriptions ? { mediaDescriptions } : {}),
                     color: platformColors.twitter,
                     platform: 'twitter',
                     sourceLanguage: translationSource?.sourceLanguage || tweet.lang?.toLowerCase(),
